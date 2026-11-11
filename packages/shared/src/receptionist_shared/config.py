@@ -76,8 +76,22 @@ class Settings(BaseSettings):
     agent_host: str = "127.0.0.1"
     agent_port: int = Field(default=7860, ge=1, le=65535)
 
-    # --- auth (phase 4) ---
-    jwt_secret: SecretStr | None = None
+    # --- auth ---
+    jwt_secret: SecretStr | None = None  # owner sessions (Phase 4)
+    # Shared secret the agent sends to the api (X-Agent-Token). Required when the api runs.
+    agent_api_token: SecretStr | None = None
+
+    # --- tools backend (Phase 3) ---
+    # "memory": in-process stub (tests, make chat). "api": real bookings via apps/api.
+    booking_backend: Literal["memory", "api"] = "memory"
+    # "fake": in-memory calendar (dev/tests). "google": Google Calendar via service account.
+    calendar_provider: Literal["fake", "google"] = "fake"
+    hold_secs: int = Field(default=120, ge=10, le=900)
+
+    # --- knowledge base (Phase 3) ---
+    kb_dir: str = "tenants/kb"
+    embeddings_enabled: bool = True
+    embeddings_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # --- call recording (phase 4) ---
     record_calls: bool = False

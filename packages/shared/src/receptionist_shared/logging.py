@@ -12,6 +12,7 @@ stderr, with `call_id` / `turn_id` lifted to the top level when they are bound, 
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from typing import TYPE_CHECKING, Any, TextIO
 
@@ -53,10 +54,31 @@ def _make_json_sink(stream: TextIO) -> Any:
     return sink
 
 
+class InterceptHandler(logging.Handler):
+    """Send stdlib `logging` records (uvicorn, sqlalchemy, httpx...) through loguru."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        logger.opt(depth=6, exception=record.exc_info).bind(stdlib=record.name).log(
+            level, record.getMessage()
+        )
+
+
 def configure_logging(level: str = "INFO", *, json_logs: bool = True) -> None:
-    """Replace loguru's default handler with ours. Safe to call more than once."""
+    """Replace loguru's default handler with ours and route stdlib logging into it.
+
+    Safe to call more than once.
+    """
     logger.remove()
     if json_logs:
         logger.add(_make_json_sink(sys.stderr), level=level, backtrace=False, diagnose=False)
     else:
         logger.add(sys.stderr, level=level, backtrace=False, diagnose=False)
+    logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO, force=True)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        std = logging.getLogger(name)
+        std.handlers = [InterceptHandler()]
+        std.propagate = False

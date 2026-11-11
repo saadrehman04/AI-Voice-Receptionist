@@ -45,3 +45,17 @@ def test_configure_logging_is_idempotent() -> None:
     configure_logging("WARNING", json_logs=True)
     configure_logging("INFO", json_logs=False)
     configure_logging("INFO", json_logs=True)
+
+
+def test_stdlib_logging_is_routed_to_json() -> None:
+    import logging
+
+    configure_logging("INFO", json_logs=True)
+    buf, handler_id = _capture()
+    try:
+        logging.getLogger("uvicorn.error").warning("from stdlib")
+    finally:
+        logger.remove(handler_id)
+    line = json.loads(buf.getvalue().strip().splitlines()[-1])
+    assert line["msg"] == "from stdlib"
+    assert line["extra"]["stdlib"] == "uvicorn.error"

@@ -98,3 +98,38 @@ def test_pick_options_spreads_over_day(salon: TenantConfig) -> None:
 
 def test_spoken_slot(salon: TenantConfig) -> None:
     assert spoken_slot(at(salon, WED, "14:30")) == "Wednesday 18 November, 2:30 PM"
+
+
+def test_hold_buckets_cover_booking_and_buffer(salon: TenantConfig) -> None:
+    from receptionist_shared.availability import hold_buckets
+
+    start = at(salon, WED, "14:00")
+    buckets = hold_buckets(salon, start, start + timedelta(minutes=45))
+    # 15 min buffer each side: 13:45 .. 15:00 -> buckets 13:45, 14:00, 14:15, 14:30, 14:45
+    assert [b.strftime("%H:%M") for b in buckets] == ["13:45", "14:00", "14:15", "14:30", "14:45"]
+
+
+def test_overlapping_slots_share_a_bucket(salon: TenantConfig) -> None:
+    from receptionist_shared.availability import hold_buckets
+
+    a = at(salon, WED, "14:00")
+    b = at(salon, WED, "14:30")
+    ba = set(hold_buckets(salon, a, a + timedelta(minutes=45)))
+    bb = set(hold_buckets(salon, b, b + timedelta(minutes=45)))
+    assert ba & bb
+
+
+async def test_search_options_moves_to_next_open_day(salon: TenantConfig) -> None:
+    from receptionist_shared.availability import search_options
+
+    facial = salon.find_service("Facial")
+    assert facial is not None
+
+    async def no_busy(_: date) -> list[Interval]:
+        return []
+
+    tue = date(2026, 11, 17)
+    result = await search_options(salon, facial, tue, no_busy, now=at(salon, tue, "08:00"))
+    assert result.day == WED
+    assert not result.requested_day_available
+    assert len(result.options) == 3

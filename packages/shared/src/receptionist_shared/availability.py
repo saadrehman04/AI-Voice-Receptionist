@@ -6,13 +6,14 @@ calendar-backed api, and can be tested exhaustively.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from receptionist_shared.tenant import Service, TenantConfig
 
 SLOT_STEP_MIN = 15
+HOLD_BUCKET_MIN = 15
 
 
 @dataclass(frozen=True)
@@ -85,3 +86,64 @@ def spoken_slot(dt: datetime) -> str:
     """'Wednesday 13 November, 2:30 PM'. The LLM turns this into natural speech."""
     hour = dt.strftime("%I").lstrip("0")
     return f"{dt:%A} {dt.day} {dt:%B}, {hour}:{dt:%M} {dt:%p}"
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    """Options to offer: on the requested day if possible, else the next day that has any."""
+
+    day: date
+    options: list[datetime]
+    requested_day_available: bool
+
+
+BusyLookup = Callable[[date], Awaitable[Sequence[Interval]]]
+
+
+async def search_options(
+    tenant: TenantConfig,
+    service: Service,
+    day: date,
+    busy_for: BusyLookup,
+    *,
+    now: datetime,
+    preferred: time | None = None,
+    search_days: int = 7,
+    limit: int = 3,
+) -> SearchResult:
+    """`pick_options` for `day`; if it has none, the first later day (within `search_days`)
+    that has some."""
+    for offset in range(search_days + 1):
+        candidate = day + timedelta(days=offset)
+        busy = await busy_for(candidate)
+        slots = free_slots(tenant, service, candidate, busy, now=now)
+        if slots:
+            return SearchResult(
+                candidate, pick_options(slots, preferred=preferred, limit=limit), offset == 0
+            )
+    return SearchResult(day, [], False)
+
+
+def guard_interval(tenant: TenantConfig, start: datetime, end: datetime) -> Interval:
+    """The time a booking keeps clear: the appointment plus the buffer on both sides."""
+    buffer = timedelta(minutes=tenant.booking_buffer_min)
+    return Interval(start - buffer, end + buffer)
+
+
+def hold_buckets(tenant: TenantConfig, start: datetime, end: datetime) -> list[datetime]:
+    """15-minute buckets a booking (with buffer) touches, aligned to the hour.
+
+    Holding every bucket means two callers can't hold overlapping slots, even ones that start
+    at different times (14:00 for 45 min vs 14:30), which a per-start-time lock would allow.
+    """
+    guard = guard_interval(tenant, start, end)
+    first = guard.start.astimezone(tenant.tz)
+    first = first.replace(
+        minute=first.minute - first.minute % HOLD_BUCKET_MIN, second=0, microsecond=0
+    )
+    buckets: list[datetime] = []
+    cursor = first
+    while cursor < guard.end:
+        buckets.append(cursor)
+        cursor += timedelta(minutes=HOLD_BUCKET_MIN)
+    return buckets

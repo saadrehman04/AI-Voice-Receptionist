@@ -1,4 +1,4 @@
-from receptionist_agent.brain.knowledge import NOT_FOUND_INSTRUCTION, describe_hours, lookup
+from receptionist_shared.knowledge import NOT_FOUND_INSTRUCTION, describe_hours, lookup
 from receptionist_shared.tenant import TenantConfig
 
 

@@ -1,3 +1,5 @@
+"""Fixtures shared by every package's tests (pytest loads this file for the whole repo)."""
+
 from datetime import datetime
 from pathlib import Path
 
@@ -5,7 +7,9 @@ import pytest
 
 from receptionist_shared.tenant import TenantConfig, load_tenant_by_slug
 
-TENANTS = Path(__file__).resolve().parents[3] / "tenants"
+pytest_plugins = ["receptionist_api.testing"]
+
+TENANTS = Path(__file__).resolve().parent / "tenants"
 
 
 @pytest.fixture
