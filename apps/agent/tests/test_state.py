@@ -82,9 +82,20 @@ def test_prepare_then_commit_must_match() -> None:
         s.require_prepared("book", ("Haircut", "15:00"))
     with pytest.raises(StateError, match="read the details back first"):
         s.require_prepared("cancel", ("Haircut", "14:00"))
+    with pytest.raises(StateError, match="not answered yet"):
+        s.require_prepared("book", ("Haircut", "14:00"))  # caller hasn't spoken since
+    s.heard_caller(1)
     s.require_prepared("book", ("Haircut", "14:00"))  # no error
     s.clear_pending()
     assert s.pending is None
+    assert s.pending_turn is None
+
+
+def test_caller_turn_count_never_goes_backwards() -> None:
+    s = CallState()
+    s.heard_caller(3)
+    s.heard_caller(1)
+    assert s.caller_turns == 3
 
 
 def test_offers_accumulate_without_duplicates() -> None:

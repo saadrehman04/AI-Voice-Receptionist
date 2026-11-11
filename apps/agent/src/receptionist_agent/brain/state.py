@@ -9,6 +9,9 @@ this state. That gives us hard guarantees the prompt alone can't:
 - A slot can only be booked if `check_availability` offered it in this call.
 - Every write (book, reschedule, cancel) is two calls: `prepare` returns the read-back, and
   `require_prepared` only lets the commit through with exactly the same details.
+- ...and only after the caller has spoken since the read-back. The LLM can't read back and
+  confirm in one breath (a real model did exactly that, inventing the caller's "yes"); the
+  commit needs a new caller turn, counted from the LLM context (`heard_caller`).
 """
 
 from __future__ import annotations
@@ -48,6 +51,8 @@ class CallState:
     ended: bool = False
     language: str | None = None  # last language the caller used ("en" / "ur")
     pending: tuple[str, tuple[object, ...]] | None = None  # (action, details) awaiting a yes
+    caller_turns: int = 0  # caller messages heard so far in this call
+    pending_turn: int | None = None  # caller_turns when the read-back was given
 
     REQUIRED_FOR_BOOKING: ClassVar[tuple[str, ...]] = ("service", "start", "caller_name", "phone")
 
@@ -108,9 +113,14 @@ class CallState:
             raise StateError("cannot book before the caller confirms the details")
         self.booking_id = booking_id
 
+    def heard_caller(self, turns: int) -> None:
+        """Update how many caller turns there have been (never goes backwards)."""
+        self.caller_turns = max(self.caller_turns, turns)
+
     def prepare(self, action: str, details: tuple[object, ...]) -> None:
         """Remember what was read back to the caller; a later commit must match it exactly."""
         self.pending = (action, details)
+        self.pending_turn = self.caller_turns
         if action == "book":
             self.confirmed = False
 
@@ -119,9 +129,15 @@ class CallState:
             raise StateError("read the details back first: call again with caller_confirmed=false")
         if self.pending[1] != details:
             raise StateError("these details differ from what was read back; read them back again")
+        if self.pending_turn is not None and self.caller_turns <= self.pending_turn:
+            raise StateError(
+                "the caller has not answered yet: read the details back, then stop and wait "
+                "for their reply before calling with caller_confirmed=true"
+            )
 
     def clear_pending(self) -> None:
         self.pending = None
+        self.pending_turn = None
 
     def summary(self) -> dict[str, object]:
         """Compact view for logs and tool results (no secrets in here)."""

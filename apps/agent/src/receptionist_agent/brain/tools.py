@@ -19,6 +19,7 @@ from loguru import logger
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import EndWorkerFrame, FunctionCallResultProperties
+from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 from receptionist_agent.brain.backend import (
@@ -30,6 +31,7 @@ from receptionist_agent.brain.backend import (
     idempotency_key,
 )
 from receptionist_agent.brain.state import CallState, Intent, StateError
+from receptionist_agent.language import caller_language
 from receptionist_shared.availability import spoken_slot
 from receptionist_shared.phone import normalize_pk_phone, spoken_digits
 from receptionist_shared.tenant import Service, TenantConfig
@@ -222,6 +224,16 @@ class ReceptionistTools:
     def _phone(self, raw: str | None) -> str | None:
         return normalize_pk_phone(raw) if raw else None
 
+    def _say(self, step: str) -> str:
+        """A read-back instruction, in the caller's language. The read-back details are
+        English text; without this, models copied them out in English to Urdu callers."""
+        if self.state.language == "ur":
+            return (
+                f"{step} The caller speaks Urdu: say it all in Urdu script, with the day, time, "
+                "name and every digit of the phone number as Urdu words."
+            )
+        return step
+
     async def _search(self, service: Service, day: date, preferred: time | None) -> Availability:
         return await self.backend.availability(
             self.tenant, service.name, day, preferred=preferred, call_id=self.call_id
@@ -284,12 +296,22 @@ class ReceptionistTools:
 
         found = await self._search(service, day, preferred)
         if found.options and found.requested_day_available:
-            return {
+            result: ToolResult = {
                 "ok": True,
                 "available": True,
                 "date": found.day.isoformat(),
                 "options": self._offer(found.options),
             }
+            exact = [o for o in found.options if preferred is not None and o.time() == preferred]
+            if exact:
+                # Seen live: with a list, models asked "which time?" even when the caller had
+                # already named one. Say plainly that the asked-for time is free.
+                result["requested_time_free"] = True
+                result["next_step"] = (
+                    f"The time the caller asked for, {spoken_slot(exact[0])}, is free: say so "
+                    "and move on to their name and number. Mention other times only if asked."
+                )
+            return result
         if found.options:
             # Nothing that day: the backend looked ahead so the caller gets real alternatives.
             return {
@@ -348,7 +370,7 @@ class ReceptionistTools:
                 "ok": True,
                 "booked": False,
                 "read_back": readback,
-                "next_step": "Read these details back and ask the caller to confirm.",
+                "next_step": self._say("Read these details back and ask the caller to confirm."),
             }
         try:
             self.state.require_prepared("book", details)
@@ -415,7 +437,7 @@ class ReceptionistTools:
                 "ok": True,
                 "rescheduled": False,
                 "read_back": readback,
-                "next_step": "Read the change back and ask the caller to confirm.",
+                "next_step": self._say("Read the change back and ask the caller to confirm."),
             }
         try:
             self.state.require_prepared("reschedule", details)
@@ -456,7 +478,7 @@ class ReceptionistTools:
                 "cancelled": False,
                 "read_back": readback,
                 "policy": self.tenant.policies.cancellation,
-                "next_step": "Read the booking back and ask the caller to confirm.",
+                "next_step": self._say("Read the booking back and ask the caller to confirm."),
             }
         try:
             self.state.require_prepared("cancel", details)
@@ -519,8 +541,23 @@ class ReceptionistTools:
         self.state.ended = True
         return {"ok": True, "ended": True}
 
-    async def run(self, name: str, args: Mapping[str, Any]) -> ToolResult:
-        """Dispatch by name, with logging. Unknown tools come back as errors, never crash."""
+    async def run(
+        self,
+        name: str,
+        args: Mapping[str, Any],
+        *,
+        caller_turns: int | None = None,
+        caller_language: str | None = None,
+    ) -> ToolResult:
+        """Dispatch by name, with logging. Unknown tools come back as errors, never crash.
+
+        `caller_turns` is how many caller messages the LLM has heard (from its context); it
+        gates the confirm step of every write (see `CallState.require_prepared`).
+        """
+        if caller_turns is not None:
+            self.state.heard_caller(caller_turns)
+        if caller_language is not None:
+            self.state.language = caller_language
         handler = self.handlers.get(name)
         if handler is None:
             return _err(f"unknown tool {name!r}")
@@ -564,12 +601,42 @@ def tools_schema() -> ToolsSchema:
     )
 
 
+def _caller_messages(context: LLMContext) -> list[str]:
+    texts: list[str] = []
+    for m in context.get_messages():
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            texts.append(content if isinstance(content, str) else "")
+    return texts
+
+
+def count_caller_turns(context: LLMContext | None) -> int | None:
+    """Caller messages in the LLM context: the source of truth for "has the caller replied"."""
+    return None if context is None else len(_caller_messages(context))
+
+
+def last_caller_language(context: LLMContext | None) -> str | None:
+    """Language of the caller's latest message ("en"/"ur"), or None if it can't be told."""
+    if context is None:
+        return None
+    for text in reversed(_caller_messages(context)):
+        language = caller_language(text)
+        if language is not None:
+            return language
+    return None
+
+
 def register_tools(llm: LLMService[Any], tools: ReceptionistTools) -> None:
     """Route every tool call from `llm` to `tools`. `end_call` also ends the pipeline."""
 
     def make_handler(name: str) -> Callable[[FunctionCallParams], Awaitable[None]]:
         async def handler(params: FunctionCallParams) -> None:
-            result = await tools.run(name, params.arguments)
+            result = await tools.run(
+                name,
+                params.arguments,
+                caller_turns=count_caller_turns(params.context),
+                caller_language=last_caller_language(params.context),
+            )
             if name == "end_call" and result.get("ended"):
                 # The goodbye was already said; don't ask the LLM for more, just hang up
                 # once queued audio has played (EndWorkerFrame flushes frames ahead of it).

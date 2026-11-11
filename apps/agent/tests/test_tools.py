@@ -2,10 +2,17 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from pipecat.processors.aggregators.llm_context import LLMContext
 
 from receptionist_agent.brain.backend import InMemoryBackend
 from receptionist_agent.brain.state import CallState, Intent
-from receptionist_agent.brain.tools import TOOL_DEFINITIONS, TOOL_NAMES, ReceptionistTools
+from receptionist_agent.brain.tools import (
+    TOOL_DEFINITIONS,
+    TOOL_NAMES,
+    ReceptionistTools,
+    count_caller_turns,
+    last_caller_language,
+)
 from receptionist_shared.tenant import TenantConfig
 
 WED = "2026-11-18"
@@ -43,8 +50,14 @@ def booking_args(start: str, **over: Any) -> dict[str, Any]:
     return args | over
 
 
+def caller_replies(tools: ReceptionistTools) -> None:
+    """Simulate the caller speaking (in a real call this is counted from the LLM context)."""
+    tools.state.heard_caller(tools.state.caller_turns + 1)
+
+
 async def book(tools: ReceptionistTools, start: str) -> dict[str, Any]:
     await tools.run("create_booking", booking_args(start))
+    caller_replies(tools)
     return await tools.run("create_booking", booking_args(start, caller_confirmed=True))
 
 
@@ -116,6 +129,7 @@ async def test_booking_needs_readback_then_yes(
     assert first["read_back"]["name"] == "Sara"
     assert backend.bookings == {}
 
+    caller_replies(tools)
     second = await tools.run("create_booking", booking_args(start, caller_confirmed=True))
     assert second["booked"] is True
     assert tools.state.booking_id == second["booking_id"]
@@ -135,12 +149,83 @@ async def test_confirmed_without_readback_is_refused(
     assert backend.bookings == {}
 
 
+async def test_confirm_in_the_same_turn_as_the_readback_is_refused(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Found live with gpt-oss-120b: it read back and confirmed in one go, inventing the yes."""
+    tools = make_tools(salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]
+    await tools.run("create_booking", booking_args(start), caller_turns=3)
+    same_turn = await tools.run(
+        "create_booking", booking_args(start, caller_confirmed=True), caller_turns=3
+    )
+    assert same_turn["ok"] is False
+    assert "not answered yet" in same_turn["error"]
+    assert backend.bookings == {}
+    # Once the caller has spoken, the same commit goes through.
+    done = await tools.run(
+        "create_booking", booking_args(start, caller_confirmed=True), caller_turns=4
+    )
+    assert done["booked"] is True
+
+
+async def test_cancel_also_needs_a_caller_turn(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    tools = make_tools(salon, backend, monday_9am)
+    await book(tools, (await offer(tools))["options"][0]["start"])
+    other = make_tools(salon, backend, monday_9am, call_id="call-2")
+    await other.run("cancel_booking", {"phone": PHONE, "caller_confirmed": False}, caller_turns=1)
+    refused = await other.run(
+        "cancel_booking", {"phone": PHONE, "caller_confirmed": True}, caller_turns=1
+    )
+    assert refused["ok"] is False
+    assert "not answered yet" in refused["error"]
+
+
+async def test_requested_time_that_is_free_is_called_out(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    tools = make_tools(salon, backend, monday_9am)
+    exact = await offer(tools, preferred="14:00")
+    assert exact["requested_time_free"] is True
+    assert "Wednesday 18 November, 2:00 PM" in exact["next_step"]
+    vague = await tools.run("check_availability", {"service": "haircut", "date": WED})
+    assert "requested_time_free" not in vague
+
+
+async def test_readback_step_follows_the_callers_language(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Seen live: models copied the English read-back out to Urdu callers."""
+    tools = make_tools(salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]
+    english = await tools.run("create_booking", booking_args(start), caller_language="en")
+    assert "Urdu" not in english["next_step"]
+    urdu = await tools.run("create_booking", booking_args(start), caller_language="ur")
+    assert "Urdu script" in urdu["next_step"]
+    assert tools.state.language == "ur"
+
+
+def test_caller_turns_and_language_come_from_the_llm_context() -> None:
+    context = LLMContext()
+    assert count_caller_turns(None) is None
+    assert last_caller_language(context) is None
+    context.add_message({"role": "assistant", "content": "Hello, Noor Beauty Salon."})
+    context.add_message({"role": "user", "content": "Hi, a haircut please"})
+    context.add_message({"role": "user", "content": "جی ہاں، ٹھیک ہے"})
+    context.add_message({"role": "user", "content": "0300 1234567"})  # digits only: no language
+    assert count_caller_turns(context) == 3
+    assert last_caller_language(context) == "ur"
+
+
 async def test_changed_details_need_a_new_readback(
     salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
 ) -> None:
     tools = make_tools(salon, backend, monday_9am)
     start = (await offer(tools))["options"][0]["start"]
     await tools.run("create_booking", booking_args(start))
+    caller_replies(tools)
     result = await tools.run(
         "create_booking", booking_args(start, caller_name="Sara Khan", caller_confirmed=True)
     )
@@ -176,6 +261,7 @@ async def test_retried_commit_is_idempotent(
     start = (await offer(tools))["options"][0]["start"]
     first = await book(tools, start)
     # The LLM repeats the commit: the read-back was used up, so nothing new is written.
+    caller_replies(tools)
     again = await tools.run("create_booking", booking_args(start, caller_confirmed=True))
     assert again["ok"] is False
     assert len(backend.bookings) == 1
@@ -236,6 +322,7 @@ async def test_reschedule_flow(
     first = await caller2.run("reschedule_booking", args)
     assert first["rescheduled"] is False
     assert first["read_back"]["to"].startswith("Wednesday 18 November")
+    caller_replies(caller2)
     done = await caller2.run("reschedule_booking", args | {"caller_confirmed": True})
     assert done["rescheduled"] is True
     assert backend.bookings[booking_id].start.isoformat() == new_start
@@ -251,6 +338,7 @@ async def test_cancel_flow_and_policy(
     caller2 = make_tools(salon, backend, monday_9am, call_id="call-2")
     first = await caller2.run("cancel_booking", {"phone": PHONE, "caller_confirmed": False})
     assert "4 hours" in first["policy"]
+    caller_replies(caller2)
     done = await caller2.run("cancel_booking", {"phone": PHONE, "caller_confirmed": True})
     assert done["cancelled"] is True
     assert backend.bookings[booking_id].status == "cancelled"

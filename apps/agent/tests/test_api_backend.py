@@ -47,6 +47,7 @@ async def test_full_booking_through_the_api(
     )
     assert blocked["ok"] is False  # held by e2e-1 during its read-back
 
+    tools.state.heard_caller(tools.state.caller_turns + 1)  # the caller says yes
     done = await tools.run("create_booking", args | {"caller_confirmed": True})
     assert done["booked"] is True
 

@@ -108,3 +108,40 @@ async def test_tool_error_is_shown_to_the_llm(salon: TenantConfig, monday_9am: d
     async with TextSession(tenant=salon, llm=ScriptedLLM(script), tools=tools, state=state) as s:
         reply = await s.send("can I get a massage?")
     assert reply.text == "error seen"
+
+
+def eager_script(messages: Sequence[dict[str, Any]]) -> Step:
+    """Misbehaves like gpt-oss-120b did live: confirms right after its own read-back."""
+    last = messages[-1]
+    result = json.loads(last_tool_result(messages) or "{}") if last.get("role") == "tool" else {}
+    if "options" in result:
+        start = result["options"][0]["start"]
+        args = {"service": "Haircut", "start": start, "caller_name": "Sara", "phone": "03001234567"}
+        return CallTools([("create_booking", args | {"caller_confirmed": False})])
+    if result.get("booked") is False:
+        prior = next(
+            m for m in reversed(messages) if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+        args = json.loads(prior["tool_calls"][0]["function"]["arguments"])
+        return CallTools([("create_booking", args | {"caller_confirmed": True})])
+    if last.get("role") == "tool":
+        return Say("refused" if result.get("ok") is False else "booked")
+    return CallTools([("check_availability", {"service": "Haircut", "date": "2026-11-18"})])
+
+
+async def test_llm_cannot_confirm_without_hearing_the_caller(
+    salon: TenantConfig, monday_9am: datetime
+) -> None:
+    """Through the real Pipecat glue: caller turns are counted from the LLM context."""
+    backend = InMemoryBackend(clock=lambda: monday_9am)
+    state = CallState()
+    tools = ReceptionistTools(salon, state, backend, call_id="t-3", clock=lambda: monday_9am)
+    async with TextSession(
+        tenant=salon, llm=ScriptedLLM(eager_script), tools=tools, state=state
+    ) as session:
+        reply = await session.send("Haircut Wednesday please, I'm Sara, 0300 1234567")
+    names = [c.name for c in reply.tool_calls]
+    assert names == ["check_availability", "create_booking", "create_booking"]
+    assert "not answered yet" in reply.tool_calls[-1].result["error"]
+    assert reply.text == "refused"
+    assert backend.bookings == {}
