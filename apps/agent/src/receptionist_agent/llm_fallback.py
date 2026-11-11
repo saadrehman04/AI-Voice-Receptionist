@@ -272,6 +272,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         self._budgets = budgets if budgets is not None else SHARED_BUDGETS
         self.on_served = on_served  # (target, status) for each answered request
         self.estimated_tokens = 0  # prompt tokens sent in answered requests (chars / 4)
+        self.exhausted = 0  # requests where every target was busy or down
 
     # ------------------------------------------------------------ ordering
 
@@ -399,6 +400,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
                     extensions=response.extensions,
                 )
             return response
+        self.exhausted += 1
         if last is not None:
             return httpx2.Response(
                 last.status_code, headers=last.headers, content=last.content, request=request

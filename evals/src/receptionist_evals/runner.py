@@ -23,7 +23,7 @@ from receptionist_agent.brain.text_session import TextSession
 from receptionist_agent.brain.tools import ReceptionistTools
 from receptionist_agent.providers import build_llm
 from receptionist_evals.caller import caller_turn
-from receptionist_evals.llm import EvalLLM
+from receptionist_evals.llm import EvalLLM, RateLimitedError
 from receptionist_evals.scenario import Scenario
 from receptionist_shared import Settings
 from receptionist_shared.api_models import BookingStatus
@@ -51,6 +51,7 @@ class CallRun:
     caller_turns: int = 0
     ended_by: str = "max_turns"  # caller | agent | max_turns | error
     error: str | None = None
+    inconclusive: str | None = None  # free-tier limits got in the way; not the agent's fault
     seconds: float = 0.0
     llm_targets: list[str] = field(default_factory=list)
     agent_tokens_estimate: int = 0
@@ -136,6 +137,9 @@ async def run_scenario(
                 if done:
                     run.ended_by = "caller"
                     break
+    except RateLimitedError as exc:
+        run.inconclusive = f"caller: {exc}"
+        run.ended_by = "error"
     except Exception as exc:  # one broken scenario must not stop the suite
         logger.exception("scenario failed to run", scenario=scenario.id)
         run.error = f"{type(exc).__name__}: {exc}"
@@ -144,6 +148,8 @@ async def run_scenario(
     run.bookings = list(backend.bookings.values())
     if fallback is not None:
         run.agent_tokens_estimate = getattr(fallback, "estimated_tokens", 0)
+        if getattr(fallback, "exhausted", 0) and run.inconclusive is None:
+            run.inconclusive = f"agent: every LLM was rate-limited {fallback.exhausted} time(s)"
     return run
 
 

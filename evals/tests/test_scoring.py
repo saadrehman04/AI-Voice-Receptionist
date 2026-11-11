@@ -8,7 +8,7 @@ from typing import Any
 import httpx2
 
 from receptionist_agent.brain.backend import Booking
-from receptionist_agent.llm_fallback import gemini_target
+from receptionist_agent.llm_fallback import BudgetBook, gemini_target
 from receptionist_agent.testing import CallTools, Say, ScriptedLLM, Step, last_tool_result
 from receptionist_evals.__main__ import gate_on_baseline
 from receptionist_evals.llm import EvalLLM
@@ -145,8 +145,56 @@ def test_metrics_and_markdown_diff() -> None:
 def test_gate_allows_two_points(tmp_path: Path) -> None:
     base = tmp_path / "baseline.json"
     base.write_text(json.dumps({"booking_accuracy": 80.0}))
-    assert gate_on_baseline({"booking_accuracy": 78.0}, base, 2.0) is True
-    assert gate_on_baseline({"booking_accuracy": 77.9}, base, 2.0) is False
+    run = {"scenarios": 15, "inconclusive": 0}
+    assert gate_on_baseline(run | {"booking_accuracy": 78.0}, base, 2.0) is True
+    assert gate_on_baseline(run | {"booking_accuracy": 77.9}, base, 2.0) is False
+
+
+def test_gate_does_not_block_when_rate_limits_ate_the_run(tmp_path: Path) -> None:
+    base = tmp_path / "baseline.json"
+    base.write_text(json.dumps({"booking_accuracy": 80.0}))
+    starved = {"scenarios": 4, "inconclusive": 11, "booking_accuracy": 25.0}
+    assert gate_on_baseline(starved, base, 2.0) is True
+
+
+def test_inconclusive_scenarios_are_left_out_of_the_metrics() -> None:
+    unsure = result("x", False)
+    unsure.inconclusive = "agent: every LLM was rate-limited 1 time(s)"
+    m = metrics([result("a", True), unsure])
+    assert m["booking_accuracy"] == 100.0 and m["inconclusive"] == 1
+    md = to_markdown([result("a", True), unsure], previous=None, title="t")
+    assert "Inconclusive: free-tier limits (1" in md and "## Failures (0)" in md
+
+
+async def test_eval_llm_waits_out_rate_limits_then_gives_up() -> None:
+    from receptionist_evals.llm import RateLimitedError
+
+    replies = iter([429, 429, 200])
+
+    def api(request: httpx2.Request) -> httpx2.Response:
+        status = next(replies, 429)
+        body = {"choices": [{"message": {"content": "hello"}}]} if status == 200 else {}
+        return httpx2.Response(status, json=body)
+
+    waits: list[float] = []
+
+    async def no_sleep(secs: float) -> None:
+        waits.append(secs)
+
+    llm = EvalLLM(
+        [gemini_target("m", "k")], network=httpx2.MockTransport(api),
+        retry_waits=(1, 2, 3), sleep=no_sleep,
+    )  # fmt: skip
+    llm.transport._budgets = BudgetBook()  # don't let cooldowns skip the mock target
+    assert await llm.chat([{"role": "user", "content": "hi"}]) == "hello"
+    assert waits == [1, 2]
+    try:
+        await llm.chat([{"role": "user", "content": "again"}])
+    except RateLimitedError:
+        pass
+    else:
+        raise AssertionError("expected RateLimitedError")
+    await llm.aclose()
 
 
 # ---------------------------------------------------------------- one scenario, fully offline

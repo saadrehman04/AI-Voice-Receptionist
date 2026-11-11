@@ -15,7 +15,7 @@ import argparse
 import asyncio
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,7 @@ from typing import Any
 from loguru import logger
 
 from receptionist_agent.brain.prompt import business_facts
-from receptionist_evals.llm import EvalLLM, EvalLLMError, eval_targets
+from receptionist_evals.llm import CALLER_MODELS, JUDGE_MODELS, EvalLLM, EvalLLMError, eval_targets
 from receptionist_evals.report import ScenarioResult, metrics, write_run
 from receptionist_evals.runner import run_scenario, run_scenario_audio
 from receptionist_evals.scenario import Scenario, load_scenarios
@@ -61,6 +61,7 @@ async def evaluate(
     *,
     use_judge: bool,
     synth: Any = None,
+    judge_llm: EvalLLM | None = None,
 ) -> ScenarioResult:
     tenants_dir = ROOT / settings.tenants_dir
     if synth is not None:
@@ -70,8 +71,8 @@ async def evaluate(
     else:
         run = await run_scenario(scenario, settings, llm, tenants_dir=tenants_dir)
     checks = rule_checks(run)
-    if use_judge and run.error is None:
-        checks.append(await judge(run, llm, judge_facts(run.tenant)))
+    if use_judge and run.error is None and run.inconclusive is None:
+        checks.append(await judge(run, judge_llm or llm, judge_facts(run.tenant)))
     result = ScenarioResult(
         id=scenario.id,
         title=scenario.title,
@@ -82,11 +83,14 @@ async def evaluate(
         seconds=run.seconds,
         ended_by=run.ended_by,
         booking_case=is_booking_case(scenario),
+        inconclusive=run.inconclusive,
         llm_targets=run.llm_targets,
         tokens_estimate=run.agent_tokens_estimate,
         transcript=run.transcript,
     )
     status = "pass" if result.passed else "FAIL " + ", ".join(c.name for c in result.failed)
+    if result.inconclusive:
+        status = f"inconclusive ({result.inconclusive})"
     logger.info("scenario", id=scenario.id, result=status, turns=run.caller_turns, secs=run.seconds)
     return result
 
@@ -100,7 +104,8 @@ async def run_suite(
     retries: int,
     audio: bool = False,
 ) -> list[ScenarioResult]:
-    llm = EvalLLM(eval_targets(settings))
+    llm = EvalLLM(eval_targets(settings, CALLER_MODELS))
+    judge_llm = EvalLLM(eval_targets(settings, JUDGE_MODELS))
     gate = asyncio.Semaphore(1 if audio else parallel)  # audio runs in real time, one at a time
     synth = None
     if audio:
@@ -110,12 +115,13 @@ async def run_suite(
 
     async def one(s: Scenario) -> ScenarioResult:
         async with gate:
-            result = await evaluate(s, settings, llm, use_judge=use_judge, synth=synth)
+            kw: dict[str, Any] = {"use_judge": use_judge, "synth": synth, "judge_llm": judge_llm}
+            result = await evaluate(s, settings, llm, **kw)
             for _ in range(retries):
-                if result.passed:
+                if result.passed and not result.inconclusive:
                     break
-                logger.info("retrying failed scenario", id=s.id)
-                result = await evaluate(s, settings, llm, use_judge=use_judge, synth=synth)
+                logger.info("retrying scenario", id=s.id)
+                result = await evaluate(s, settings, llm, **kw)
                 result.tags = [*result.tags, "retried"]
             return result
 
@@ -123,13 +129,16 @@ async def run_suite(
         return list(await asyncio.gather(*(one(s) for s in scenarios)))
     finally:
         await llm.aclose()
+        await judge_llm.aclose()
 
 
-def gate_on_baseline(
-    current: dict[str, float | None], baseline_path: Path, max_drop: float
-) -> bool:
+def gate_on_baseline(current: Mapping[str, Any], baseline_path: Path, max_drop: float) -> bool:
     """True if booking accuracy is within `max_drop` points of the baseline."""
     baseline = json.loads(baseline_path.read_text())
+    unsure, judged = current.get("inconclusive") or 0, current.get("scenarios") or 0
+    if judged == 0 or unsure > judged:  # more than half couldn't run: nothing fair to compare
+        print(f"::warning::evals inconclusive: {unsure} scenario(s) hit free-tier limits")
+        return True
     before, now = baseline.get("booking_accuracy"), current.get("booking_accuracy")
     if before is None or now is None:
         print("baseline gate: no booking accuracy to compare")

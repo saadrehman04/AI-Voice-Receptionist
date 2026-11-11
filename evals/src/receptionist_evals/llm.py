@@ -1,13 +1,17 @@
-"""The evals' own LLM client (simulated caller and judge), separate from the agent's.
+"""The evals' own LLM clients (simulated caller and judge), separate from the agent's.
 
-It goes Gemini first, then Groq gpt-oss-20b, through the same `FallbackTransport` as the agent.
-The agent under test runs on Groq gpt-oss-120b, so caller and judge requests don't eat into
-its per-minute budget (D29).
+Free tiers limit each *model* separately, so the three roles use different models (D29):
+the agent runs on Groq gpt-oss-120b (falling back to Gemini 3.5 Flash-Lite); the caller uses
+Gemini 3.1 Flash-Lite first; the judge uses Gemini 3.5 Flash first. Everything goes through the
+same `FallbackTransport`, and when every model is busy `EvalLLM` waits and retries instead of
+failing the scenario.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx2
@@ -22,17 +26,24 @@ from receptionist_agent.llm_fallback import (
 )
 from receptionist_shared import Settings
 
+CALLER_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite")
+JUDGE_MODELS = ("gemini-3.5-flash", "gemini-3.1-flash-lite")
+RETRY_WAITS_SECS = (5.0, 15.0, 30.0, 60.0)  # when every model said 429
+
 
 class EvalLLMError(RuntimeError):
     pass
 
 
-def eval_targets(settings: Settings) -> list[LlmTarget]:
+class RateLimitedError(EvalLLMError):
+    """The free tiers said no for long enough that this scenario can't be judged fairly."""
+
+
+def eval_targets(settings: Settings, models: tuple[str, ...] = CALLER_MODELS) -> list[LlmTarget]:
     targets: list[LlmTarget] = []
     if settings.gemini_api_key is not None and settings.gemini_api_key.get_secret_value():
-        targets.append(
-            gemini_target(settings.gemini_model, settings.gemini_api_key.get_secret_value())
-        )
+        key = settings.gemini_api_key.get_secret_value()
+        targets += [gemini_target(model, key) for model in models]
     if settings.groq_api_key is not None and settings.groq_api_key.get_secret_value():
         targets.append(
             groq_target(
@@ -48,11 +59,19 @@ def eval_targets(settings: Settings) -> list[LlmTarget]:
 
 class EvalLLM:
     def __init__(
-        self, targets: list[LlmTarget], *, network: httpx2.AsyncBaseTransport | None = None
+        self,
+        targets: list[LlmTarget],
+        *,
+        network: httpx2.AsyncBaseTransport | None = None,
+        retry_waits: tuple[float, ...] = RETRY_WAITS_SECS,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.transport = FallbackTransport(targets, inner=network)
         self._client = httpx2.AsyncClient(transport=self.transport, timeout=60)
+        self._retry_waits = retry_waits
+        self._sleep = sleep
         self.requests = 0
+        self.rate_limited_waits = 0
 
     async def chat(
         self, messages: list[dict[str, str]], *, json_mode: bool = False, temperature: float = 0.7
@@ -66,6 +85,15 @@ class EvalLLM:
             body["response_format"] = {"type": "json_object"}
         self.requests += 1
         response = await self._client.post(GROQ_CHAT_URL, json=body)
+        for wait in self._retry_waits:
+            if response.status_code != 429:
+                break
+            self.rate_limited_waits += 1
+            logger.info("every eval model is rate-limited; waiting", secs=wait)
+            await self._sleep(wait)
+            response = await self._client.post(GROQ_CHAT_URL, json=body)
+        if response.status_code == 429:
+            raise RateLimitedError("every eval model stayed rate-limited")
         if response.status_code != 200:
             raise EvalLLMError(f"eval LLM failed: HTTP {response.status_code}")
         try:

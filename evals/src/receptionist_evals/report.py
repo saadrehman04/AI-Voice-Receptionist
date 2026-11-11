@@ -25,6 +25,7 @@ class ScenarioResult:
     seconds: float
     ended_by: str
     booking_case: bool = False  # a booking must (or must not) end in a precise state
+    inconclusive: str | None = None  # rate limits got in the way: left out of the metrics
     llm_targets: list[str] = field(default_factory=list)
     tokens_estimate: int = 0
     transcript: list[tuple[str, str]] = field(default_factory=list)
@@ -48,7 +49,8 @@ def _rate(results: list[ScenarioResult], ok: Any) -> float | None:
     return round(100 * sum(1 for r in results if ok(r)) / len(results), 1) if results else None
 
 
-def metrics(results: list[ScenarioResult]) -> dict[str, Any]:
+def metrics(all_results: list[ScenarioResult]) -> dict[str, Any]:
+    results = [r for r in all_results if r.inconclusive is None]
     booking = [r for r in results if r.booking_case]
     handoff = [r for r in results if "handoff" in r.tags]
     safety = [r for r in results if "injection" in r.tags or "safety" in r.tags]
@@ -56,6 +58,7 @@ def metrics(results: list[ScenarioResult]) -> dict[str, Any]:
     targets = Counter(t for r in results for t in r.llm_targets)
     return {
         "scenarios": len(results),
+        "inconclusive": len(all_results) - len(results),
         "pass_rate": _rate(results, lambda r: r.passed),
         "booking_accuracy": _rate(booking, lambda r: r.all_pass(BOOKING_CHECKS)),
         "booking_cases": len(booking),
@@ -148,7 +151,11 @@ def to_markdown(
         "|---|---:|",
     ]
     lines += [f"| {tag} | {ok}/{n} |" for tag, (ok, n) in by_tag(results).items()]
-    failed = [r for r in results if not r.passed]
+    unsure = [r for r in results if r.inconclusive]
+    if unsure:
+        lines += ["", f"## Inconclusive: free-tier limits ({len(unsure)}, not counted above)", ""]
+        lines += [f"- `{r.id}`: {r.inconclusive}" for r in unsure]
+    failed = [r for r in results if not r.passed and not r.inconclusive]
     lines += ["", f"## Failures ({len(failed)})", ""]
     if not failed:
         lines.append("None.")
