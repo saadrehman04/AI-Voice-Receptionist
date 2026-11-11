@@ -24,6 +24,7 @@ from typing import Any
 
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
@@ -47,6 +48,13 @@ from receptionist_agent.brain.prompt import build_system_prompt, greeting
 from receptionist_agent.brain.state import CallState
 from receptionist_agent.brain.tools import ReceptionistTools, register_tools, tools_schema
 from receptionist_agent.language import CallerLanguageTracker, ReplyLanguageRouter
+from receptionist_agent.latency import (
+    FullReplyBuffer,
+    LatencyFlags,
+    ToolFiller,
+    prewarm,
+    use_clause_chunking,
+)
 from receptionist_agent.providers import Services, build_services, describe_providers
 from receptionist_agent.records import (
     ApiCallRecorder,
@@ -88,6 +96,7 @@ class Call:
     recorder: CallRecorder = field(default_factory=lambda: MemoryRecorder("unknown"))
     recording: AudioBufferProcessor | None = None
     recording_path: Path | None = None
+    flags: LatencyFlags = field(default_factory=LatencyFlags)
 
 
 def make_recorder(call_id: str, tenant: TenantConfig, backend: BookingBackend) -> CallRecorder:
@@ -109,6 +118,25 @@ def tts_stage(services: Services) -> list[FrameProcessor]:
     return [router, ServiceSwitcher(services=[services.tts, services.urdu_tts])]
 
 
+def speech_stage(call: Call) -> list[FrameProcessor]:
+    """Between the LLM and TTS: the latency features the flags turn on (see latency.py)."""
+    flags = call.flags
+    stage: list[FrameProcessor] = []
+    if flags.filler_after_ms > 0:
+
+        def language() -> str | None:
+            return call.state.language
+
+        stage.append(ToolFiller(after_ms=flags.filler_after_ms, language=language))
+    if flags.text_chunking == "full":
+        stage.append(FullReplyBuffer())
+    elif flags.text_chunking == "clause":
+        for tts in (call.services.tts, call.services.urdu_tts):
+            if tts is not None:
+                use_clause_chunking(tts)
+    return stage
+
+
 def build_task(
     transport: BaseTransport,
     call: Call,
@@ -119,9 +147,9 @@ def build_task(
     """Assemble the pipeline for one call. Pure wiring, no I/O, so it is easy to test."""
     context = LLMContext(tools=tools_schema())
     register_tools(call.services.llm, call.tools)
+    vad = vad or SileroVADAnalyzer(params=VADParams(stop_secs=call.flags.vad_stop_secs))
     aggregators = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=vad or SileroVADAnalyzer()),
+        context, user_params=LLMUserAggregatorParams(vad_analyzer=vad)
     )
 
     def remember_language(language: str) -> None:
@@ -146,6 +174,7 @@ def build_task(
             CallerLanguageTracker(remember_language),
             user,
             call.services.llm,
+            *speech_stage(call),
             *tts_stage(call.services),
             transport.output(),
             *([call.recording] if call.recording is not None else []),
@@ -189,6 +218,7 @@ def prepare_call(
         tools=tools,
         services=services,
         recorder=recorder,
+        flags=LatencyFlags.from_settings(settings),
     )
     if settings.record_calls:
         # Stereo: caller on the left channel, agent on the right. Written once at hang-up.
@@ -249,6 +279,12 @@ async def run_bot(
             call.recording.add_event_handler("on_audio_data", on_audio)
 
         await call.recorder.start()
+        # Held for the whole call; a failed warm-up is logged and costs nothing else.
+        warmup = (
+            asyncio.create_task(prewarm(call.services.stt, call.services.llm))
+            if call.flags.prewarm
+            else None
+        )
 
         async def on_client_connected(_transport: BaseTransport, _client: Any) -> None:
             logger.info("caller connected", tenant=call.tenant.slug)
@@ -267,6 +303,8 @@ async def run_bot(
         try:
             await runner.run()
         finally:
+            if warmup is not None and not warmup.done():
+                warmup.cancel()
             await call.recorder.end(
                 language=call.state.language,
                 recording_path=str(saved_recording[0]) if saved_recording else None,

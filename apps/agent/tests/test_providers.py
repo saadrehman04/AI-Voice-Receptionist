@@ -4,6 +4,7 @@ import pytest
 from pipecat.services.groq.llm import GroqLLMSettings
 
 from receptionist_agent import providers
+from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
 from receptionist_agent.providers import (
     ProviderConfigError,
     build_llm,
@@ -90,9 +91,10 @@ def test_blank_key_counts_as_missing() -> None:
 
 def test_groq_stt_autodetects_language_by_default() -> None:
     stt = build_stt(make(groq_api_key="gsk_test"))
-    assert type(stt).__name__ == "GroqSTTService"
-    assert stt._settings.model == "whisper-large-v3-turbo"
-    assert stt._settings.language is None
+    assert isinstance(stt, AutoLanguageGroqSTTService)
+    settings: Any = stt._settings
+    assert settings.model == "whisper-large-v3-turbo"
+    assert settings.language is None
 
 
 def test_stt_language_mapping() -> None:
@@ -152,3 +154,53 @@ def test_describe_providers_never_includes_secrets() -> None:
     assert described.startswith("stt=groq llm=groq (fallbacks: groq:openai/gpt-oss-20b,")
     assert "secret" not in described
     assert describe_providers(make(llm_fallbacks="")) == "stt=groq llm=groq tts=kokoro"
+
+
+class FakeTranscriptions:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] = {}
+
+    async def create(self, **kwargs: Any) -> str:
+        self.kwargs = kwargs
+        return "ok"
+
+
+class FakeAudio:
+    def __init__(self) -> None:
+        self.transcriptions = FakeTranscriptions()
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.audio = FakeAudio()
+
+
+async def test_groq_stt_lets_whisper_detect_the_language_when_unset() -> None:
+    """Pipecat's GroqSTTService asserts a language is set; a bilingual line must not send one."""
+    stt = providers.build_stt(make(groq_api_key="gsk_test"))
+    assert isinstance(stt, AutoLanguageGroqSTTService)
+    fake = FakeClient()
+    stt._client = fake  # type: ignore[assignment]
+    assert await stt._transcribe(b"RIFF") == "ok"
+    assert "language" not in fake.audio.transcriptions.kwargs
+    assert fake.audio.transcriptions.kwargs["model"] == "whisper-large-v3-turbo"
+
+
+async def test_groq_stt_sends_a_configured_language() -> None:
+    stt = providers.build_stt(make(groq_api_key="gsk_test", stt_language="ur"))
+    fake = FakeClient()
+    stt._client = fake  # type: ignore[attr-defined]
+    await stt._transcribe(b"RIFF")  # type: ignore[attr-defined]
+    assert fake.audio.transcriptions.kwargs["language"] == "ur"
+
+
+def test_kokoro_gets_a_quiet_timeout_longer_than_its_synthesis_time(
+    monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]
+) -> None:
+    """Pipecat drops a TTS request after 3 s without audio; Kokoro needs ~1x real time."""
+    import pipecat.services.kokoro.tts as kokoro_mod
+
+    monkeypatch.setattr(kokoro_mod, "KokoroTTSService", recorder)
+    build_tts(make(tts_provider="kokoro"))
+    (kwargs,) = recorder.calls
+    assert kwargs["stop_frame_timeout_s"] == providers.KOKORO_QUIET_TIMEOUT_SECS > 3.0

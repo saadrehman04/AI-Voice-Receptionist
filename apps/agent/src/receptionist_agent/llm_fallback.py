@@ -166,6 +166,39 @@ class GeminiStreamFix(httpx2.AsyncByteStream):
         await self._inner.aclose()
 
 
+# Words a short "simple" caller turn is made of (English and Urdu, as Whisper writes them).
+SIMPLE_WORDS = frozenset(
+    {
+        # English
+        *("yes", "yeah", "yep", "yup", "no", "nope", "ok", "okay", "sure", "alright", "all"),
+        *("thanks", "thank", "you", "correct", "right", "that's", "that", "is"),
+        *("great", "fine", "good", "perfect", "please", "bye", "goodbye"),
+        # Urdu
+        *("جی", "ہاں", "نہیں", "ٹھیک", "ہے", "شکریہ", "بہت", "اچھا", "درست", "بالکل"),
+        *("خدا", "حافظ", "اوکے"),
+    }
+)
+MAX_SIMPLE_WORDS = 5
+_WORD = re.compile(r"[\w']+", re.UNICODE)
+
+
+def last_caller_text(body: Mapping[str, Any]) -> str | None:
+    for message in reversed(body.get("messages") or []):
+        if isinstance(message, dict) and message.get("role") == "user":
+            content = message.get("content")
+            return content if isinstance(content, str) else None
+    return None
+
+
+def is_simple_turn(body: Mapping[str, Any]) -> bool:
+    """A yes/no/thanks-type caller turn: short, and only made of SIMPLE_WORDS."""
+    text = last_caller_text(body)
+    if not text:
+        return False
+    words = [w.lower() for w in _WORD.findall(text)]
+    return 0 < len(words) <= MAX_SIMPLE_WORDS and all(w in SIMPLE_WORDS for w in words)
+
+
 @dataclass
 class _Budget:
     ready_at: float = 0.0  # monotonic time before which we skip this target
@@ -181,14 +214,18 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         inner: httpx2.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_served: Callable[[LlmTarget, int], None] | None = None,
+        simple_target: str | None = None,
     ) -> None:
         if not targets:
             raise ValueError("FallbackTransport needs at least one target")
         self.targets = list(targets)
+        if simple_target is not None and simple_target not in {t.name for t in self.targets}:
+            raise ValueError(f"simple_target {simple_target!r} is not one of the targets")
+        self.simple_target = simple_target  # tried first for yes/no/thanks turns
         self._inner = inner or httpx2.AsyncHTTPTransport()
         self._clock = clock
         self._budgets = {t.name: _Budget() for t in self.targets}
-        self._on_served = on_served
+        self.on_served = on_served  # (target, status) for each answered request
 
     # ------------------------------------------------------------ ordering
 
@@ -207,6 +244,8 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         """Targets to try: usable ones in configured order, then the rest by soonest ready."""
         now, tokens = self._clock(), self._estimate_tokens(body)
         ready = [t for t in self.targets if self._usable_now(t, tokens, now)]
+        if self.simple_target is not None and is_simple_turn(body):
+            ready.sort(key=lambda t: t.name != self.simple_target)  # stable: rest keep order
 
         def ready_at(t: LlmTarget) -> float:
             b = self._budgets[t.name]
@@ -288,10 +327,12 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
                 )
                 last = response
                 continue
-            if len(tried) > 1 or target is not self.targets[0]:
+            if len(tried) > 1 or (
+                target is not self.targets[0] and target.name != self.simple_target
+            ):
                 logger.info("llm served by fallback", target=target.name, tried=tried)
-            if self._on_served is not None:
-                self._on_served(target, response.status_code)
+            if self.on_served is not None:
+                self.on_served(target, response.status_code)
             if target.gemini_compat and isinstance(response.stream, httpx2.AsyncByteStream):
                 response = httpx2.Response(
                     response.status_code,
@@ -325,6 +366,7 @@ __all__ = [
     "LlmTarget",
     "gemini_target",
     "groq_target",
+    "is_simple_turn",
     "parse_duration",
     "with_placeholder_signatures",
 ]

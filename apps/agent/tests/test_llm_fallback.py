@@ -18,6 +18,7 @@ from receptionist_agent.llm_fallback import (
     GeminiStreamFix,
     gemini_target,
     groq_target,
+    is_simple_turn,
     parse_duration,
 )
 from receptionist_agent.providers import ProviderConfigError, build_llm, llm_targets
@@ -344,3 +345,52 @@ async def test_gemini_fallback_through_real_openai_sdk_and_pipecat() -> None:
     follow_up = seen[-1]["messages"]
     assistant = next(m for m in follow_up if m.get("tool_calls"))
     assert assistant["tool_calls"][0]["extra_content"]["google"]["thought_signature"]
+
+
+# ---------------------------------------------------------------- simple-turn routing
+
+
+def caller_says(text: str) -> dict[str, Any]:
+    return BODY | {"messages": [*BODY["messages"], {"role": "user", "content": text}]}
+
+
+@pytest.mark.parametrize(
+    ("text", "simple"),
+    [
+        ("Yes, that's right.", True),
+        ("Great, thank you.", True),
+        ("جی ہاں، ٹھیک ہے۔", True),
+        ("بہت شکریہ", True),
+        ("No.", True),
+        ("Yes, but can I make it four instead?", False),  # has content, and too long
+        ("How much is a haircut?", False),
+        ("", False),
+    ],
+)
+def test_is_simple_turn(text: str, simple: bool) -> None:
+    assert is_simple_turn(caller_says(text)) is simple
+
+
+async def test_simple_turns_try_the_small_model_first() -> None:
+    providers = Providers({}, {})
+    transport = FallbackTransport(
+        [BIG, SMALL, GEMINI], inner=httpx2.MockTransport(providers), simple_target=SMALL.name
+    )
+    async with httpx2.AsyncClient(transport=transport) as client:
+        await client.post(GROQ_CHAT_URL, json=caller_says("Yes, that's right."))
+        await client.post(GROQ_CHAT_URL, json=caller_says("How much is a haircut?"))
+    assert models(providers) == ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+
+
+def test_simple_target_must_be_a_target() -> None:
+    with pytest.raises(ValueError, match="simple_target"):
+        FallbackTransport([BIG], simple_target="groq:nope")
+
+
+def test_simple_turn_model_is_wired_from_settings() -> None:
+    llm = build_llm(settings(), "prompt")
+    assert isinstance(llm, PooledGroqLLMService)
+    assert llm.fallback.simple_target == "groq:openai/gpt-oss-20b"
+    off = build_llm(settings(llm_simple_turn_model=""), "prompt")
+    assert isinstance(off, PooledGroqLLMService)
+    assert off.fallback.simple_target is None

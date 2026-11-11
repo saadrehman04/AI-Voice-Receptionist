@@ -23,6 +23,8 @@ from pydantic import SecretStr
 from receptionist_agent.llm_fallback import LlmTarget, gemini_target, groq_target
 from receptionist_shared import Settings
 
+KOKORO_QUIET_TIMEOUT_SECS = 12.0
+
 
 class ProviderConfigError(RuntimeError):
     """A provider is selected but something it needs (e.g. an API key) is missing."""
@@ -61,11 +63,13 @@ def build_stt(settings: Settings) -> STTService:
     language = stt_language(settings)
     match settings.stt_provider:
         case "groq":
-            from pipecat.services.groq.stt import GroqSTTService
+            from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
 
-            return GroqSTTService(
+            return AutoLanguageGroqSTTService(
                 api_key=_require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq STT"),
-                settings=GroqSTTService.Settings(model=settings.groq_stt_model, language=language),
+                settings=AutoLanguageGroqSTTService.Settings(
+                    model=settings.groq_stt_model, language=language
+                ),
             )
         case "faster_whisper":
             from pipecat.services.whisper.stt import WhisperSTTService
@@ -79,26 +83,45 @@ def build_stt(settings: Settings) -> STTService:
             )
 
 
+def _parse_target(settings: Settings, item: str, groq_key: str, what: str) -> LlmTarget | None:
+    provider, sep, model = item.partition(":")
+    if not sep or not model:
+        raise ProviderConfigError(f"{what} entry {item!r} is not provider:model")
+    if provider == "groq":
+        return groq_target(model, groq_key, reasoning_effort=settings.groq_reasoning_effort)
+    if provider == "gemini":
+        key = settings.gemini_api_key
+        if key is None or not key.get_secret_value().strip():
+            logger.warning(f"{what} skipped: GEMINI_API_KEY is not set", model=model)
+            return None
+        return gemini_target(model, key.get_secret_value())
+    raise ProviderConfigError(f"{what} provider {provider!r} is not groq or gemini")
+
+
 def llm_targets(settings: Settings) -> list[LlmTarget]:
     """Main Groq model first, then LLM_FALLBACKS whose keys are set (others are skipped)."""
     groq_key = _require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM")
     effort = settings.groq_reasoning_effort
     targets = [groq_target(settings.groq_llm_model, groq_key, reasoning_effort=effort)]
     for item in filter(None, (x.strip() for x in settings.llm_fallbacks.split(","))):
-        provider, sep, model = item.partition(":")
-        if not sep or not model:
-            raise ProviderConfigError(f"LLM_FALLBACKS entry {item!r} is not provider:model")
-        if provider == "groq":
-            targets.append(groq_target(model, groq_key, reasoning_effort=effort))
-        elif provider == "gemini":
-            key = settings.gemini_api_key
-            if key is None or not key.get_secret_value().strip():
-                logger.warning("LLM fallback skipped: GEMINI_API_KEY is not set", model=model)
-                continue
-            targets.append(gemini_target(model, key.get_secret_value()))
-        else:
-            raise ProviderConfigError(f"LLM_FALLBACKS provider {provider!r} is not groq or gemini")
+        target = _parse_target(settings, item, groq_key, "LLM_FALLBACKS")
+        if target is not None and target.name not in {t.name for t in targets}:
+            targets.append(target)
     return targets
+
+
+def simple_turn_target(settings: Settings, targets: list[LlmTarget]) -> str | None:
+    """Name of the LLM_SIMPLE_TURN_MODEL target, added to `targets` if not already there."""
+    item = settings.llm_simple_turn_model.strip()
+    if not item:
+        return None
+    groq_key = _require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM")
+    target = _parse_target(settings, item, groq_key, "LLM_SIMPLE_TURN_MODEL")
+    if target is None:
+        return None
+    if target.name not in {t.name for t in targets}:
+        targets.append(target)
+    return target.name
 
 
 def build_llm(settings: Settings, system_prompt: str) -> LLMService[Any]:
@@ -107,8 +130,10 @@ def build_llm(settings: Settings, system_prompt: str) -> LLMService[Any]:
             from receptionist_agent.groq_pool import PooledGroqLLMService
 
             targets = llm_targets(settings)
+            simple = simple_turn_target(settings, targets)
             return PooledGroqLLMService(
                 targets=targets,
+                simple_target=simple,
                 api_key=targets[0].api_key,
                 settings=PooledGroqLLMService.Settings(
                     model=settings.groq_llm_model,
@@ -141,7 +166,13 @@ def build_tts(settings: Settings) -> TTSService:
         case "kokoro":
             from pipecat.services.kokoro.tts import KokoroTTSService
 
-            return KokoroTTSService(settings=KokoroTTSService.Settings(voice=settings.kokoro_voice))
+            # Kokoro sends nothing until a whole sentence is synthesised, at about real time on
+            # this CPU, so a 4 s sentence goes 4 s without audio. Pipecat's default 3 s quiet
+            # timeout then dropped it as "no audio"; give it room (see DECISIONS D25).
+            return KokoroTTSService(
+                settings=KokoroTTSService.Settings(voice=settings.kokoro_voice),
+                stop_frame_timeout_s=KOKORO_QUIET_TIMEOUT_SECS,
+            )
         case "piper":
             from pipecat.services.piper.tts import PiperTTSService
 

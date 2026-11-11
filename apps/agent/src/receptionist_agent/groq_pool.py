@@ -26,10 +26,11 @@ class PooledGroqLLMService(GroqLLMService):
         *,
         targets: Sequence[LlmTarget],
         network: httpx2.AsyncBaseTransport | None = None,  # tests pass a mock here
+        simple_target: str | None = None,
         **kwargs: Any,
     ) -> None:
         # Set before super().__init__, which calls create_client.
-        self.fallback = FallbackTransport(targets, inner=network)
+        self.fallback = FallbackTransport(targets, inner=network, simple_target=simple_target)
         super().__init__(**kwargs)
 
     def create_client(

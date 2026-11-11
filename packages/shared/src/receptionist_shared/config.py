@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     # When LLM_PROVIDER=groq: models tried in order when the main one is rate-limited or down,
     # as "provider:model" (provider groq or gemini). Empty = no fallback. See DECISIONS D23.
     llm_fallbacks: str = "groq:openai/gpt-oss-20b,gemini:gemini-3.5-flash-lite"
+    # Short yes/no/thanks turns go to this target first ("" = off). See DECISIONS D26.
+    llm_simple_turn_model: str = "groq:openai/gpt-oss-20b"
+
+    # --- latency (Phase 5; each is a flag so `make bench` can compare before/after) ---
+    tts_text_chunking: Literal["full", "sentence", "clause"] = "clause"
+    filler_after_ms: int = Field(default=400, ge=0)  # 0 = no "one moment" fillers
+    prewarm_connections: bool = True
+    vad_stop_secs: float = Field(default=0.2, gt=0, le=2)
+    availability_cache_secs: int = Field(default=30, ge=0)  # api side; 0 = no cache
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2:3b"
     faster_whisper_model: str = "small"
