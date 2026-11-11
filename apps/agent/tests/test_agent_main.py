@@ -1,22 +1,21 @@
-import logging
-
 import pytest
 
-from receptionist_agent.__main__ import describe_providers, main
+from receptionist_agent import __main__ as agent_main
 from receptionist_shared import Settings
 
 
-def test_describe_providers_lists_choices() -> None:
-    s = Settings(stt_provider="faster_whisper", llm_provider="ollama", tts_provider="piper")
-    assert describe_providers(s) == "stt=faster_whisper llm=ollama tts=piper"
+def test_runner_argv_forces_webrtc_and_our_host_port() -> None:
+    argv = agent_main.runner_argv("127.0.0.1", 7861, ["-v"])
+    assert argv[1:] == ["-t", "webrtc", "--host", "127.0.0.1", "--port", "7861", "-v"]
 
 
-def test_describe_providers_never_includes_secrets() -> None:
-    s = Settings(groq_api_key="gsk_super_secret")  # type: ignore[arg-type]
-    assert "gsk_super_secret" not in describe_providers(s)
+def test_main_exits_early_without_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent_main, "get_settings", lambda: Settings(_env_file=None))
+    with pytest.raises(SystemExit) as exc:
+        agent_main.main()
+    assert exc.value.code == 2
 
 
-def test_main_runs(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.INFO, logger="receptionist_agent"):
-        main()
-    assert "agent placeholder started" in caplog.text
+def test_bot_is_exported_for_the_runner() -> None:
+    # Pipecat's runner looks up `bot` on the __main__ module.
+    assert callable(agent_main.bot)

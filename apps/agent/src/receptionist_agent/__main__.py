@@ -1,28 +1,55 @@
-"""Entry point: `make agent` / `uv run receptionist-agent`.
+"""Entry point: `make agent` (= `python -m receptionist_agent`).
 
-Phase 0 placeholder: it loads settings and reports which providers are selected,
-which proves the agent can import the shared package and read .env.
+Starts Pipecat's development runner, which serves:
+  - http://<AGENT_HOST>:<AGENT_PORT>/client  the prebuilt browser voice client
+  - /start and /api/offer                    WebRTC signaling (peer-to-peer, no media server)
+
+The runner looks up `bot` on the `__main__` module, which is why this file re-exports it
+and why the agent must be started with `python -m`, not through a console-script wrapper.
 """
 
 from __future__ import annotations
 
-import logging
+import sys
 
-from receptionist_shared import Settings, get_settings
+from loguru import logger
 
-logger = logging.getLogger("receptionist_agent")
+from receptionist_shared import get_settings
+from receptionist_shared.logging import configure_logging
+
+# Configure logging before anything imports Pipecat, which logs at import time.
+configure_logging(get_settings().log_level, json_logs=get_settings().log_json)
+
+from receptionist_agent.bot import bot  # noqa: E402
+from receptionist_agent.prompts import PHASE1_SYSTEM_PROMPT  # noqa: E402
+from receptionist_agent.providers import (  # noqa: E402
+    ProviderConfigError,
+    build_llm,
+    describe_providers,
+)
+
+__all__ = ["bot", "main"]
 
 
-def describe_providers(settings: Settings) -> str:
-    """One line describing the configured STT/LLM/TTS providers (never secrets)."""
-    return f"stt={settings.stt_provider} llm={settings.llm_provider} tts={settings.tts_provider}"
+def runner_argv(host: str, port: int, extra: list[str]) -> list[str]:
+    """CLI args for Pipecat's runner: WebRTC only, host/port from our Settings."""
+    return ["receptionist-agent", "-t", "webrtc", "--host", host, "--port", str(port), *extra]
 
 
 def main() -> None:
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
-    logger.info("agent placeholder started: %s", describe_providers(settings))
-    logger.info("voice pipeline not built yet (Phase 1)")
+    logger.info("agent starting", providers=describe_providers(settings))
+    try:
+        build_llm(settings, PHASE1_SYSTEM_PROMPT)  # fail fast on a missing API key
+    except ProviderConfigError as exc:
+        logger.error(str(exc))
+        raise SystemExit(2) from exc
+
+    from pipecat.runner.run import main as run_pipecat_runner
+
+    sys.argv = runner_argv(settings.agent_host, settings.agent_port, sys.argv[1:])
+    logger.info(f"open http://{settings.agent_host}:{settings.agent_port}/client to talk")
+    run_pipecat_runner()
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs agent api web test lint fmt evals
+.PHONY: help install up down logs agent api web test lint fmt evals latency test-models
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -25,8 +25,11 @@ down: ## Stop Postgres + Redis (data kept in volumes)
 logs: ## Follow Postgres + Redis logs
 	docker compose logs -f
 
-agent: ## Run the voice agent
-	$(UV_RUN) receptionist-agent
+agent: ## Run the voice agent; talk to it at http://localhost:7860/client
+	$(UV_RUN) python -m receptionist_agent
+
+latency: ## P50/P95 per stage from logs/turns.jsonl (ARGS="--last 50")
+	$(UV_RUN) python -m receptionist_agent.latency_report $(ARGS)
 
 api: ## Run the FastAPI backend (auto-reload in dev)
 	$(UV_RUN) receptionist-api
@@ -34,8 +37,11 @@ api: ## Run the FastAPI backend (auto-reload in dev)
 web: ## Run the Next.js dev server on :3000
 	$(WEB) dev
 
-test: ## Run all tests
+test: ## Run all tests (fast; no model downloads, no network)
 	$(UV_RUN) pytest
+
+test-models: ## Smoke-test local Kokoro + faster-whisper on CPU (downloads models once)
+	$(UV_RUN) pytest -m models -s
 
 lint: ## Lint + type-check Python and web
 	$(UV_RUN) ruff check .
