@@ -1,0 +1,563 @@
+"""The receptionist's tools: JSON schemas for the LLM plus the code that runs them.
+
+Each handler takes the LLM's arguments (a dict) and returns a JSON-able dict. Handlers never
+raise for caller mistakes: bad input comes back as `{"ok": False, "error": ...}` with a hint the
+LLM can act on ("ask the caller to repeat the number"). All writes go through `CallState`, which
+enforces the read-back-then-confirm rule.
+
+`register_tools` (bottom) plugs the handlers into a Pipecat LLM service.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import date, datetime, time, timedelta
+from typing import Any
+
+from loguru import logger
+from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
+from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
+from pipecat.frames.frames import EndWorkerFrame, FunctionCallResultProperties
+from pipecat.services.llm_service import FunctionCallParams, LLMService
+
+from receptionist_agent.brain.backend import (
+    Booking,
+    BookingBackend,
+    BookingNotFoundError,
+    SlotTakenError,
+    idempotency_key,
+)
+from receptionist_agent.brain.knowledge import lookup
+from receptionist_agent.brain.state import CallState, Intent, StateError
+from receptionist_shared.availability import free_slots, pick_options, spoken_slot
+from receptionist_shared.phone import normalize_pk_phone, spoken_digits
+from receptionist_shared.tenant import Service, TenantConfig
+
+ToolResult = dict[str, Any]
+Handler = Callable[[Mapping[str, Any]], Awaitable[ToolResult]]
+Clock = Callable[[], datetime]
+
+NEXT_DAYS_TO_SEARCH = 7
+
+
+def _err(message: str, **extra: Any) -> ToolResult:
+    return {"ok": False, "error": message, **extra}
+
+
+def _str(args: Mapping[str, Any], key: str) -> str | None:
+    value = args.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _bool(args: Mapping[str, Any], key: str) -> bool:
+    value = args.get(key)
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1")
+    return bool(value)
+
+
+# ---------------------------------------------------------------- JSON schemas
+
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "name": "check_availability",
+        "description": (
+            "Find free appointment times for a service on a date. Returns at most 3 options. "
+            "Only ever offer times this returns."
+        ),
+        "properties": {
+            "service": {"type": "string", "description": "Service name as listed in the facts."},
+            "date": {
+                "type": "string",
+                "description": "Date as YYYY-MM-DD in the business timezone.",
+            },
+            "preferred_time": {
+                "type": "string",
+                "description": "Optional preferred time as HH:MM (24 hour).",
+            },
+        },
+        "required": ["service", "date"],
+    },
+    {
+        "name": "create_booking",
+        "description": (
+            "Book an offered slot. First call with caller_confirmed=false to get the read-back; "
+            "read it to the caller; call again with caller_confirmed=true only after a clear yes."
+        ),
+        "properties": {
+            "service": {"type": "string"},
+            "start": {
+                "type": "string",
+                "description": "Start time exactly as returned by check_availability (ISO 8601).",
+            },
+            "caller_name": {"type": "string"},
+            "phone": {"type": "string", "description": "Caller's phone number, digits only."},
+            "caller_confirmed": {"type": "boolean"},
+        },
+        "required": ["service", "start", "caller_name", "phone", "caller_confirmed"],
+    },
+    {
+        "name": "reschedule_booking",
+        "description": (
+            "Move an existing booking to a new offered time. Look up by phone. Same two-step "
+            "confirmation as create_booking."
+        ),
+        "properties": {
+            "phone": {"type": "string"},
+            "new_start": {
+                "type": "string",
+                "description": "ISO 8601 start from check_availability.",
+            },
+            "booking_id": {
+                "type": "string",
+                "description": "Only needed if the caller has more than one booking.",
+            },
+            "caller_confirmed": {"type": "boolean"},
+        },
+        "required": ["phone", "new_start", "caller_confirmed"],
+    },
+    {
+        "name": "cancel_booking",
+        "description": "Cancel an existing booking, looked up by phone. Two-step confirmation.",
+        "properties": {
+            "phone": {"type": "string"},
+            "booking_id": {"type": "string"},
+            "caller_confirmed": {"type": "boolean"},
+        },
+        "required": ["phone", "caller_confirmed"],
+    },
+    {
+        "name": "lookup_business_info",
+        "description": (
+            "Look up anything about the business not already in your facts (parking, products, "
+            "walk-ins, warranty...). If found=false, do not guess."
+        ),
+        "properties": {"question": {"type": "string"}},
+        "required": ["question"],
+    },
+    {
+        "name": "take_message",
+        "description": "Leave a message for the team.",
+        "properties": {
+            "message": {"type": "string"},
+            "caller_name": {"type": "string"},
+            "phone": {"type": "string"},
+        },
+        "required": ["message"],
+    },
+    {
+        "name": "transfer_to_human",
+        "description": "Ask a team member to call the caller back.",
+        "properties": {"reason": {"type": "string"}},
+        "required": ["reason"],
+    },
+    {
+        "name": "end_call",
+        "description": "Hang up after you have said goodbye.",
+        "properties": {"reason": {"type": "string"}},
+        "required": [],
+    },
+]
+
+TOOL_NAMES = tuple(t["name"] for t in TOOL_DEFINITIONS)
+
+
+# ---------------------------------------------------------------- handlers
+
+
+class ReceptionistTools:
+    def __init__(
+        self,
+        tenant: TenantConfig,
+        state: CallState,
+        backend: BookingBackend,
+        *,
+        call_id: str,
+        clock: Clock | None = None,
+    ) -> None:
+        self.tenant = tenant
+        self.state = state
+        self.backend = backend
+        self.call_id = call_id
+        self._clock = clock or tenant.now
+        self.handlers: dict[str, Handler] = {
+            "check_availability": self.check_availability,
+            "create_booking": self.create_booking,
+            "reschedule_booking": self.reschedule_booking,
+            "cancel_booking": self.cancel_booking,
+            "lookup_business_info": self.lookup_business_info,
+            "take_message": self.take_message,
+            "transfer_to_human": self.transfer_to_human,
+            "end_call": self.end_call,
+        }
+
+    # -- helpers
+
+    def _service(self, name: str | None) -> Service | None:
+        return self.tenant.find_service(name) if name else None
+
+    def _unknown_service(self, name: str | None) -> ToolResult:
+        return _err(
+            f"unknown service {name!r}",
+            available_services=[s.name for s in self.tenant.services],
+        )
+
+    def _parse_start(self, raw: str | None) -> datetime | None:
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=self.tenant.tz)
+        return dt.astimezone(self.tenant.tz)
+
+    def _phone(self, raw: str | None) -> str | None:
+        return normalize_pk_phone(raw) if raw else None
+
+    async def _options(self, service: Service, day: date, preferred: time | None) -> list[datetime]:
+        busy = await self.backend.busy_intervals(self.tenant, day)
+        slots = free_slots(self.tenant, service, day, busy, now=self._clock())
+        return pick_options(slots, preferred=preferred)
+
+    def _offer(self, slots: list[datetime]) -> list[dict[str, str]]:
+        self.state.record_offer(slots)
+        return [{"start": s.isoformat(), "spoken": spoken_slot(s)} for s in slots]
+
+    def _describe(self, booking: Booking) -> dict[str, str]:
+        return {
+            "booking_id": booking.id,
+            "service": booking.service,
+            "when": spoken_slot(booking.start.astimezone(self.tenant.tz)),
+            "start": booking.start.isoformat(),
+            "name": booking.caller_name,
+        }
+
+    async def _find_booking(self, phone: str, booking_id: str | None) -> Booking | ToolResult:
+        bookings = await self.backend.find_bookings(self.tenant, phone)
+        if booking_id:
+            bookings = [b for b in bookings if b.id == booking_id.upper()]
+        if not bookings:
+            return _err(
+                "no upcoming booking found for that number",
+                hint="Ask the caller to check the number, or offer to take a message.",
+            )
+        if len(bookings) > 1:
+            return _err(
+                "more than one booking for that number",
+                bookings=[self._describe(b) for b in bookings],
+                hint="Ask which one, then call again with booking_id.",
+            )
+        return bookings[0]
+
+    # -- tools
+
+    async def check_availability(self, args: Mapping[str, Any]) -> ToolResult:
+        service = self._service(_str(args, "service"))
+        if service is None:
+            return self._unknown_service(_str(args, "service"))
+        try:
+            day = date.fromisoformat(_str(args, "date") or "")
+        except ValueError:
+            return _err("date must be YYYY-MM-DD")
+        preferred: time | None = None
+        if pt := _str(args, "preferred_time"):
+            try:
+                preferred = time.fromisoformat(pt)
+            except ValueError:
+                return _err("preferred_time must be HH:MM")
+
+        if self.state.intent not in (Intent.RESCHEDULE,):
+            self.state.set_intent(Intent.BOOK)
+        self.state.update(service=service.name, preferred_date=day.isoformat())
+
+        options = await self._options(service, day, preferred)
+        if options:
+            return {
+                "ok": True,
+                "available": True,
+                "date": day.isoformat(),
+                "options": self._offer(options),
+            }
+
+        # Nothing that day: look ahead so the caller gets real alternatives.
+        for offset in range(1, NEXT_DAYS_TO_SEARCH + 1):
+            alt_day = day + timedelta(days=offset)
+            options = await self._options(service, alt_day, preferred)
+            if options:
+                return {
+                    "ok": True,
+                    "available": False,
+                    "note": f"Nothing free on {day:%A %d %B}. The next free day is shown.",
+                    "date": alt_day.isoformat(),
+                    "options": self._offer(options),
+                }
+        return {
+            "ok": True,
+            "available": False,
+            "options": [],
+            "note": "Nothing free in the next week. Offer to take a message.",
+        }
+
+    async def create_booking(self, args: Mapping[str, Any]) -> ToolResult:
+        service = self._service(_str(args, "service"))
+        if service is None:
+            return self._unknown_service(_str(args, "service"))
+        start = self._parse_start(_str(args, "start"))
+        if start is None:
+            return _err("start must be an ISO time returned by check_availability")
+        name = _str(args, "caller_name")
+        if not name:
+            return _err("ask the caller for their name")
+        phone = self._phone(_str(args, "phone"))
+        if phone is None:
+            return _err("that phone number looks incomplete; ask the caller to repeat it")
+
+        self.state.set_intent(Intent.BOOK)
+        self.state.update(service=service.name, start=start, caller_name=name, phone=phone)
+        if start not in self.state.offered_slots:
+            return _err("that time was not offered; call check_availability and offer its times")
+
+        details = (service.name, start.isoformat(), name, phone)
+        readback = {
+            "service": service.name,
+            "when": spoken_slot(start),
+            "name": name,
+            "phone": spoken_digits(phone),
+        }
+        if not _bool(args, "caller_confirmed"):
+            self.state.prepare("book", details)
+            return {
+                "ok": True,
+                "booked": False,
+                "read_back": readback,
+                "next_step": "Read these details back and ask the caller to confirm.",
+            }
+        try:
+            self.state.require_prepared("book", details)
+            self.state.confirm()
+        except StateError as exc:
+            self.state.prepare("book", details)
+            return _err(str(exc), read_back=readback)
+
+        end = start + timedelta(minutes=service.duration_min)
+        try:
+            booking = await self.backend.create_booking(
+                self.tenant,
+                service=service.name,
+                start=start,
+                end=end,
+                caller_name=name,
+                phone=phone,
+                call_id=self.call_id,
+                idempotency_key=idempotency_key(self.call_id, *details),
+            )
+        except SlotTakenError:
+            self.state.clear_pending()
+            self.state.confirmed = False
+            options = await self._options(service, start.date(), start.time())
+            return _err(
+                "that slot was just taken by someone else",
+                options=self._offer(options),
+                hint="Apologise and offer these instead.",
+            )
+        self.state.mark_booked(booking.id)
+        self.state.clear_pending()
+        logger.info("booking created", booking_id=booking.id, service=service.name)
+        return {"ok": True, "booked": True, **self._describe(booking)}
+
+    async def reschedule_booking(self, args: Mapping[str, Any]) -> ToolResult:
+        phone = self._phone(_str(args, "phone"))
+        if phone is None:
+            return _err("that phone number looks incomplete; ask the caller to repeat it")
+        new_start = self._parse_start(_str(args, "new_start"))
+        if new_start is None:
+            return _err("new_start must be an ISO time returned by check_availability")
+        self.state.set_intent(Intent.RESCHEDULE)
+        self.state.update(phone=phone)
+
+        found = await self._find_booking(phone, _str(args, "booking_id"))
+        if isinstance(found, dict):
+            return found
+        if new_start not in self.state.offered_slots:
+            return _err(
+                "that time was not offered; call check_availability for the booking's service",
+                service=found.service,
+            )
+        service = self._service(found.service)
+        duration = (
+            service.duration_min
+            if service
+            else int((found.end - found.start).total_seconds() // 60)
+        )
+        details = (found.id, new_start.isoformat())
+        readback = {
+            "service": found.service,
+            "from": spoken_slot(found.start.astimezone(self.tenant.tz)),
+            "to": spoken_slot(new_start),
+            "name": found.caller_name,
+        }
+        if not _bool(args, "caller_confirmed"):
+            self.state.prepare("reschedule", details)
+            return {
+                "ok": True,
+                "rescheduled": False,
+                "read_back": readback,
+                "next_step": "Read the change back and ask the caller to confirm.",
+            }
+        try:
+            self.state.require_prepared("reschedule", details)
+        except StateError as exc:
+            self.state.prepare("reschedule", details)
+            return _err(str(exc), read_back=readback)
+        try:
+            moved = await self.backend.reschedule_booking(
+                self.tenant,
+                found.id,
+                start=new_start,
+                end=new_start + timedelta(minutes=duration),
+            )
+        except SlotTakenError:
+            self.state.clear_pending()
+            return _err("that slot was just taken; check availability again")
+        except BookingNotFoundError:
+            return _err("booking no longer exists")
+        self.state.clear_pending()
+        return {"ok": True, "rescheduled": True, **self._describe(moved)}
+
+    async def cancel_booking(self, args: Mapping[str, Any]) -> ToolResult:
+        phone = self._phone(_str(args, "phone"))
+        if phone is None:
+            return _err("that phone number looks incomplete; ask the caller to repeat it")
+        self.state.set_intent(Intent.CANCEL)
+        self.state.update(phone=phone)
+        found = await self._find_booking(phone, _str(args, "booking_id"))
+        if isinstance(found, dict):
+            return found
+        details = (found.id,)
+        readback = self._describe(found)
+        if not _bool(args, "caller_confirmed"):
+            self.state.prepare("cancel", details)
+            return {
+                "ok": True,
+                "cancelled": False,
+                "read_back": readback,
+                "policy": self.tenant.policies.cancellation,
+                "next_step": "Read the booking back and ask the caller to confirm.",
+            }
+        try:
+            self.state.require_prepared("cancel", details)
+        except StateError as exc:
+            self.state.prepare("cancel", details)
+            return _err(str(exc), read_back=readback)
+        cancelled = await self.backend.cancel_booking(self.tenant, found.id)
+        self.state.clear_pending()
+        return {"ok": True, "cancelled": True, **self._describe(cancelled)}
+
+    async def lookup_business_info(self, args: Mapping[str, Any]) -> ToolResult:
+        question = _str(args, "question") or ""
+        if self.state.intent == Intent.UNKNOWN:
+            self.state.set_intent(Intent.QUESTION)
+        return lookup(self.tenant, question, language=self.state.language or "en").as_tool_result()
+
+    async def take_message(self, args: Mapping[str, Any]) -> ToolResult:
+        message = _str(args, "message")
+        if not message:
+            return _err("ask the caller what message to leave")
+        name = _str(args, "caller_name") or self.state.caller_name
+        phone = self._phone(_str(args, "phone")) or self.state.phone
+        self.state.set_intent(Intent.MESSAGE)
+        self.state.update(caller_name=name, phone=phone)
+        message_id = await self.backend.take_message(
+            self.tenant, caller_name=name, phone=phone, message=message, call_id=self.call_id
+        )
+        result: ToolResult = {"ok": True, "message_id": message_id}
+        if phone is None:
+            result["hint"] = "Ask for a phone number so the team can call back."
+        return result
+
+    async def transfer_to_human(self, args: Mapping[str, Any]) -> ToolResult:
+        self.state.set_intent(Intent.HANDOFF)
+        handoff_id = await self.backend.request_handoff(
+            self.tenant,
+            reason=_str(args, "reason") or "caller asked for a person",
+            caller_name=self.state.caller_name,
+            phone=self.state.phone,
+            call_id=self.call_id,
+        )
+        result: ToolResult = {
+            "ok": True,
+            "handoff_id": handoff_id,
+            "say": f"{self.tenant.handoff.name.split(' (')[0]} from the team will call you back.",
+        }
+        if self.state.phone is None:
+            result["hint"] = "Ask for the caller's phone number for the call back."
+        return result
+
+    async def end_call(self, args: Mapping[str, Any]) -> ToolResult:
+        self.state.ended = True
+        return {"ok": True, "ended": True}
+
+    async def run(self, name: str, args: Mapping[str, Any]) -> ToolResult:
+        """Dispatch by name, with logging. Unknown tools come back as errors, never crash."""
+        handler = self.handlers.get(name)
+        if handler is None:
+            return _err(f"unknown tool {name!r}")
+        try:
+            result = await handler(args)
+        except Exception as exc:  # a tool bug must not kill the call
+            logger.exception("tool failed", tool=name)
+            return _err(f"{type(exc).__name__}: the system had a problem; offer to take a message")
+        # Log the outcome without caller name or phone number (no PII in logs).
+        logger.info(
+            "tool call",
+            tool=name,
+            ok=result.get("ok"),
+            intent=self.state.intent.value,
+            confirmed=self.state.confirmed,
+            booking_id=self.state.booking_id,
+        )
+        return result
+
+
+# ---------------------------------------------------------------- Pipecat glue
+
+
+def tools_schema() -> ToolsSchema:
+    return ToolsSchema(
+        standard_tools=[
+            FunctionSchema(
+                name=d["name"],
+                description=d["description"],
+                properties=d["properties"],
+                required=d["required"],
+            )
+            for d in TOOL_DEFINITIONS
+        ]
+    )
+
+
+def register_tools(llm: LLMService[Any], tools: ReceptionistTools) -> None:
+    """Route every tool call from `llm` to `tools`. `end_call` also ends the pipeline."""
+
+    def make_handler(name: str) -> Callable[[FunctionCallParams], Awaitable[None]]:
+        async def handler(params: FunctionCallParams) -> None:
+            result = await tools.run(name, params.arguments)
+            if name == "end_call" and result.get("ended"):
+                # The goodbye was already said; don't ask the LLM for more, just hang up
+                # once queued audio has played (EndWorkerFrame flushes frames ahead of it).
+                await params.result_callback(
+                    result, properties=FunctionCallResultProperties(run_llm=False)
+                )
+                await params.llm.push_frame(EndWorkerFrame(reason="end_call"))
+                return
+            await params.result_callback(result)
+
+        return handler
+
+    for name in TOOL_NAMES:
+        llm.register_function(name, make_handler(name))
