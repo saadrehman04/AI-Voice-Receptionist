@@ -76,7 +76,8 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** load once at process start and share (Phase 5 pre-warming will revisit).
 
 ## D10. Urdu speech: Piper's Urdu voices; Kokoro stays for English (found in Phase 1)
-- **Status:** direction chosen; per-language TTS routing is built in Phase 2.
+- **Status:** built in Phase 2 (`language.py`): a router before a Pipecat `ServiceSwitcher`
+  picks the voice per reply from its script.
 - **Problem:** Kokoro has no Urdu (its languages: English, Spanish, French, Hindi, Italian,
   Japanese, Portuguese, Chinese).
 - **Finding:** Piper's catalogue has two Urdu voices, `ur_PK-fasih-medium` (male) and
@@ -86,3 +87,34 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Plan:** English replies -> Kokoro; Urdu replies -> Piper Urdu voice, picked per reply.
 - **Alternatives:** Kokoro's Hindi voice reading Urdu transliterated into Devanagari (extra
   transliteration step, odd for Urdu loanwords); Meta MMS Urdu TTS (non-commercial licence).
+
+## D11. Booking safety is enforced in code, not only in the prompt (Phase 2)
+- **Decision:** every write tool (create, reschedule, cancel) is two calls. The first
+  (`caller_confirmed=false`) validates everything and returns a read-back; `CallState` remembers
+  exactly what was read back. The second (`caller_confirmed=true`) only goes through if the details
+  are identical. A slot can only be booked if `check_availability` offered it in this call, and the
+  backend write carries an idempotency key.
+- **Why:** an LLM can skip a prompt instruction; it cannot skip a check in the tool. This turns
+  "always read back and confirm" and "never offer a time we didn't check" into guarantees, which is
+  what makes it safe to let an LLM write to a real calendar.
+- **Alternatives:** prompt-only rules (cheaper, but untestable and occasionally ignored); a single
+  `confirm_booking` tool (the model could call it without a read-back).
+
+## D12. Tenant facts: core facts in the prompt, everything else through a tool (Phase 2)
+- **Decision:** each business is a YAML file validated by `TenantConfig` (strict: unknown keys
+  rejected, slug must match file name, overlapping hours rejected). Services, prices, hours and
+  policies go into the system prompt; FAQs (and the Phase 3 knowledge base) are answered by
+  `lookup_business_info`, which returns `found=false` rather than guessing.
+- **Why:** the facts needed on most turns cost no tool round trip; the long tail can grow without
+  bloating every request. A missing price is `null` in YAML and the prompt says "never estimate".
+- **Alternatives:** everything in the prompt (simple, but grows with every FAQ); everything via tools
+  (an extra LLM round trip on the commonest questions).
+
+## D13. A scripted LLM for tests and evals (Phase 2)
+- **Decision:** `receptionist_agent.testing.ScriptedLLM` subclasses Pipecat's OpenAI LLM service and
+  only replaces the network call with a Python function. Conversation tests run through Pipecat's
+  real context aggregators, tool registration and function-call frames.
+- **Why:** deterministic, offline, fast tests of the whole brain (a full booking conversation runs
+  in under a second), while still catching wiring mistakes a pure unit test would miss.
+- **Alternatives:** mocking the LLM client (brittle, tied to the OpenAI wire format); only live-LLM
+  evals (slow, rate-limited, non-deterministic; they come in Phase 6 on top of this).

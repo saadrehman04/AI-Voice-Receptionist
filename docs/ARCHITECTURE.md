@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 1 (browser voice loop). The api, tools and dashboard boxes are still planned.
+Status: Phase 2 (receptionist brain with stub tools). The api, real calendar and dashboard are still planned.
 
 ## Big picture
 
@@ -58,14 +58,24 @@ flowchart LR
   local models load slowly), wires the pipeline and runs it until the caller hangs up.
 
   ```text
-  transport.input -> STT -> user aggregator -> LLM -> TTS -> transport.output -> assistant aggregator
-                            (Silero VAD + Smart Turn v3)
+  transport.input -> STT -> caller language -> user aggregator -> LLM
+      -> reply language router -> TTS switcher (Kokoro | Piper Urdu) -> transport.output
+      -> assistant aggregator
   ```
 
   The user aggregator decides when the caller has finished (VAD plus the Smart Turn v3 ONNX model on
   CPU) and adds the transcript to the shared `LLMContext`; the assistant aggregator records what the
   bot actually said. `TurnTimingObserver` watches frames from the side and writes one JSON line per
   turn to `logs/turns.jsonl`.
+- **The brain (apps/agent/.../brain/):** per call we load the tenant YAML, build the system prompt
+  from its facts (`prompt.py`), and create a `CallState` and `ReceptionistTools`. The LLM calls tools;
+  tools validate input, go through `CallState` (which enforces read-back-then-confirm, see D11) and
+  read/write through a `BookingBackend` (an in-memory stub now; the api in Phase 3).
+  `knowledge.py` answers only from config. `text_session.py` runs the same brain without audio
+  (`make chat`, and the Phase 6 evals).
+- **Languages:** `CallerLanguageTracker` notes the caller's language from each transcript (Urdu or
+  Hindi script -> Urdu); `ReplyLanguageRouter` holds each reply until its first letter shows its
+  script, then switches the TTS (Urdu -> Piper `ur_PK`, else Kokoro) before any text is spoken.
 - **Logging:** loguru everywhere (Pipecat uses it too), one JSON object per line, with `call_id` and
   `turn_id` at the top level (see `receptionist_shared.logging`).
 - **A booking (from Phase 3):** the LLM calls a tool, the agent calls the api, and the api locks the slot

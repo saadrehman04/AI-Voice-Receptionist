@@ -46,6 +46,7 @@ Run from the repo root. `make help` lists everything.
 - `make install`: `uv sync --all-packages` + `pnpm install` in apps/web; creates .env from .env.example if missing
 - `make up` / `make down` / `make logs`: Postgres 16 + Redis 7 via docker compose (`up` waits for healthchecks)
 - `make agent`: voice agent on :7860 (`uv run --all-packages python -m receptionist_agent`); talk at http://localhost:7860/client. Must run as `python -m` (Pipecat's runner finds `bot` on `__main__`)
+- `make chat`: text chat with the receptionist (real LLM + tools, stub bookings; `ARGS="--tenant demo-workshop"`); needs GROQ_API_KEY
 - `make latency`: P50/P95 per stage from logs/turns.jsonl (`ARGS="--last 50"`)
 - `make api`: FastAPI on 127.0.0.1:8000 with reload in dev (`receptionist-api`); docs at /docs
 - `make web`: Next.js dev server on :3000 (`pnpm --dir apps/web dev`)
