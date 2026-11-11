@@ -1,0 +1,152 @@
+"""Pytest fixtures for tests that need real Postgres and Redis (docker-compose, or CI services).
+
+Registered for the whole repo by the root conftest.py (`pytest_plugins`), so both the api tests
+and the agent's end-to-end tests can use them.
+
+- A separate database, `<name>_test`, is created if missing and migrated with Alembic.
+- Redis uses database 15. Tables and keys are wiped before every test.
+- If the services are not reachable the tests are skipped, unless REQUIRE_SERVICES=1 (CI),
+  in which case they fail: a green CI run must have really exercised the database.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import AsyncIterator, Iterator
+from datetime import datetime
+from pathlib import Path
+
+import asyncpg  # type: ignore[import-untyped]
+import httpx
+import pytest
+from redis.asyncio import Redis
+from sqlalchemy.engine import make_url
+
+from receptionist_api.booking_service import BookingService
+from receptionist_api.calendar import FakeCalendar
+from receptionist_api.db.session import make_engine, make_sessionmaker
+from receptionist_api.holds import SlotHolds
+from receptionist_api.knowledge_base import KnowledgeBase
+from receptionist_api.main import Resources, create_app
+from receptionist_api.tenants import TenantRegistry
+from receptionist_shared import get_settings
+
+REPO = Path(__file__).resolve().parents[4]
+TOKEN = "test-agent-token"  # noqa: S105 - test-only value, never a real secret
+REDIS_TEST_DB = 15
+
+
+def _test_db_url() -> str:
+    explicit = os.environ.get("TEST_DATABASE_URL")
+    if explicit:
+        return explicit
+    url = make_url(get_settings().database_url)
+    return url.set(database=f"{url.database}_test").render_as_string(hide_password=False)
+
+
+def _redis_url() -> str:
+    url = os.environ.get("TEST_REDIS_URL") or get_settings().redis_url
+    base = url.rsplit("/", 1)[0] if url.count("/") > 2 else url
+    return f"{base}/{REDIS_TEST_DB}"
+
+
+def _unavailable(reason: str) -> None:
+    if os.environ.get("REQUIRE_SERVICES") == "1":
+        pytest.fail(f"services required but unavailable: {reason}")
+    pytest.skip(f"Postgres/Redis not available ({reason}); run `make up`")
+
+
+async def _ensure_database(url: str) -> None:
+    sa_url = make_url(url)
+    admin = sa_url.set(drivername="postgresql", database="postgres")
+    conn = await asyncpg.connect(admin.render_as_string(hide_password=False))
+    try:
+        exists = await conn.fetchval(
+            "select 1 from pg_database where datname = $1", sa_url.database
+        )
+        if not exists:
+            await conn.execute(f'CREATE DATABASE "{sa_url.database}"')
+    finally:
+        await conn.close()
+
+
+@pytest.fixture(scope="session")
+def database_url() -> Iterator[str]:
+    url = _test_db_url()
+    try:
+        asyncio.run(asyncio.wait_for(_ensure_database(url), 5))
+    except Exception as exc:
+        _unavailable(f"postgres: {type(exc).__name__}")
+    from alembic import command
+    from alembic.config import Config
+
+    os.environ["MIGRATIONS_DATABASE_URL"] = url
+    try:
+        command.upgrade(Config(str(REPO / "apps/api/alembic.ini")), "head")
+    finally:
+        os.environ.pop("MIGRATIONS_DATABASE_URL", None)
+    yield url
+
+
+@pytest.fixture
+async def redis() -> AsyncIterator[Redis]:
+    client = Redis.from_url(_redis_url())
+    try:
+        await asyncio.wait_for(client.ping(), 3)
+    except Exception as exc:
+        await client.aclose()
+        _unavailable(f"redis: {type(exc).__name__}")
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await client.aclose()
+
+
+@pytest.fixture
+def calendar() -> FakeCalendar:
+    return FakeCalendar()
+
+
+@pytest.fixture
+async def bookings(
+    database_url: str, redis: Redis, calendar: FakeCalendar, monday_9am: datetime
+) -> AsyncIterator[BookingService]:
+    engine = make_engine(database_url)
+    async with engine.begin() as conn:
+        from sqlalchemy import text
+
+        await conn.execute(text("TRUNCATE bookings, messages, tenants CASCADE"))
+    service = BookingService(
+        make_sessionmaker(engine),
+        SlotHolds(redis, hold_secs=120),
+        calendar,
+        clock=lambda tenant: monday_9am.astimezone(tenant.tz),
+    )
+    yield service
+    await engine.dispose()
+
+
+@pytest.fixture
+def registry() -> TenantRegistry:
+    return TenantRegistry.from_dir(REPO / "tenants")
+
+
+@pytest.fixture
+async def api(
+    bookings: BookingService, registry: TenantRegistry
+) -> AsyncIterator[httpx.AsyncClient]:
+    for tenant in registry.all():
+        await bookings.sync_tenant(tenant)
+    resources = Resources(
+        tenants=registry,
+        bookings=bookings,
+        kb=KnowledgeBase(REPO / "tenants/kb", embedder=None),
+        agent_token=TOKEN,
+    )
+    app = create_app(resources)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://api", headers={"X-Agent-Token": TOKEN}
+    ) as client:
+        yield client
