@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Shared config, schemas and models used by the agent and the api."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "loguru>=0.7.3",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
 ]

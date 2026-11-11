@@ -41,16 +41,23 @@ class Settings(BaseSettings):
     tts_provider: TtsProvider = "kokoro"
 
     # --- provider credentials and models ---
+    # Defaults were checked against each provider's model list on 2026-11-11.
     groq_api_key: SecretStr | None = None
-    groq_llm_model: str | None = None
-    groq_stt_model: str | None = None
+    groq_llm_model: str = "llama-3.3-70b-versatile"
+    groq_stt_model: str = "whisper-large-v3-turbo"
     gemini_api_key: SecretStr | None = None
-    gemini_model: str | None = None
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str | None = None
+    gemini_model: str = "gemini-3.5-flash-lite"
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "llama3.2:3b"
     faster_whisper_model: str = "small"
-    kokoro_voice: str | None = None
-    piper_voice: str | None = None
+    kokoro_voice: str = "af_heart"
+    piper_voice: str = "en_US-lessac-medium"
+    # ISO code like "en" or "ur"; unset = let Whisper auto-detect per utterance.
+    stt_language: str | None = None
+
+    # --- observability ---
+    log_json: bool = True
+    turns_log_path: str = "logs/turns.jsonl"
 
     # --- local services ---
     database_url: str = "postgresql+asyncpg://receptionist:receptionist@localhost:5432/receptionist"
