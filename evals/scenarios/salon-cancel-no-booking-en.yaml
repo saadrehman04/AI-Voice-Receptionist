@@ -1,0 +1,20 @@
+id: salon-cancel-no-booking-en
+title: Cancels, but has no booking
+tenant: demo-salon
+language: en
+tags:
+- cancel
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask to cancel your appointment; you think it was on Saturday.
+facts:
+  name: Uzma Rafiq
+  phone: 0300 5550127
+expect:
+  outcome:
+  - no_action
+  - message
+  tools_not_called:
+  - cancel_booking
+  must_mention:
+  - find|no booking|couldn't|can't see|not see

@@ -1,0 +1,18 @@
+id: salon-price-discount-en
+title: Asks for a discount
+tenant: demo-salon
+language: en
+tags:
+- price
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask for a 20% discount on a haircut because you're a regular.
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  - handoff
+  must_not_mention:
+  - 20 ?%|twenty percent off|discount (is )?(applied|approved|done)

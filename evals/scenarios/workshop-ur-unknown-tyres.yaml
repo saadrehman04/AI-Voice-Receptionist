@@ -1,0 +1,18 @@
+id: workshop-ur-unknown-tyres
+title: 'Urdu: asks about tyres (not in facts)'
+tenant: demo-workshop
+language: ur
+tags:
+- unknown
+- urdu
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: پوچھنا ہے کہ کیا آپ ٹائر بھی بدلتے ہیں۔
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_not_mention:
+  - جی ہاں،? (ہم )?ٹائر

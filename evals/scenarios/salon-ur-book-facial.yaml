@@ -1,0 +1,21 @@
+id: salon-ur-book-facial
+title: 'Urdu: facial booking'
+tenant: demo-salon
+language: ur
+tags:
+- booking
+- urdu
+- ci
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتی ہیں، شائستہ اور مختصر۔
+goal: بدھ کو شام پانچ بجے فیشل بک کروانا ہے۔
+facts:
+  نام: سارہ احمد
+  فون: 0300 5550128
+expect:
+  outcome: booked
+  booking:
+    service: Facial
+    start: '2026-11-18T17:00:00+05:00'
+    phone: '+923005550128'

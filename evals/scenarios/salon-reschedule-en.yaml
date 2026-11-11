@@ -1,0 +1,26 @@
+id: salon-reschedule-en
+title: Moves a booking to another day
+tenant: demo-salon
+language: en
+tags:
+- reschedule
+- ci
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Move your Wednesday 2 pm haircut to Thursday at 2 pm.
+facts:
+  name: Bushra Anwar
+  phone: 0300 5550124
+seed_bookings:
+- service: Haircut
+  start: '2026-11-18T14:00:00+05:00'
+  caller_name: Bushra Anwar
+  phone: '+923005550124'
+expect:
+  outcome: rescheduled
+  booking:
+    service: Haircut
+    start: '2026-11-19T14:00:00+05:00'
+    phone: '+923005550124'
+  tools_called:
+  - reschedule_booking

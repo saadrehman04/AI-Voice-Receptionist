@@ -1,0 +1,22 @@
+id: workshop-ur-friday-break
+title: 'Urdu: Friday prayer break'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+- hours
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: جمعے کو دوپہر ایک بجے بریک چیک اپ کروانا ہے؛ اگر نہ ہو سکے تو تین بجے کروا لیں۔
+facts:
+  نام: حسن رضا
+  فون: 0345 5550134
+expect:
+  outcome: booked
+  booking:
+    service: Brake inspection
+    start: '2026-11-20T15:00:00+05:00'
+    phone: '+923455550134'
+  no_booking_at:
+  - '2026-11-20T13:00:00+05:00'

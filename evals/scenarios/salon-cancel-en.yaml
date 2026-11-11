@@ -1,0 +1,25 @@
+id: salon-cancel-en
+title: Cancels a booking
+tenant: demo-salon
+language: en
+tags:
+- cancel
+- ci
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Cancel your facial on Thursday at 12 noon.
+facts:
+  name: Samina Yousaf
+  phone: 0333 5550126
+seed_bookings:
+- service: Facial
+  start: '2026-11-19T12:00:00+05:00'
+  caller_name: Samina Yousaf
+  phone: '+923335550126'
+expect:
+  outcome: cancelled
+  tools_called:
+  - cancel_booking
+  must_mention:
+  - 4|four

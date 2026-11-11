@@ -1,0 +1,19 @@
+id: salon-ur-bridal-price
+title: 'Urdu: bridal price not listed'
+tenant: demo-salon
+language: ur
+tags:
+- price
+- urdu
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتی ہیں۔
+goal: برائیڈل میک اپ کی قیمت پوچھنی ہے، اور ایک بار اصرار کرنا ہے کہ اندازاً ہی بتا دیں۔
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_not_mention:
+  - \d{4,}
+  - ہزار روپے

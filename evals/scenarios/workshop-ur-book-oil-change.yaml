@@ -1,0 +1,21 @@
+id: workshop-ur-book-oil-change
+title: 'Urdu: oil change tomorrow'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+- ci
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: کل صبح دس بجے آئل چینج کروانا ہے۔
+facts:
+  نام: عمران علی
+  فون: 0300 5550131
+expect:
+  outcome: booked
+  booking:
+    service: Oil change
+    start: '2026-11-17T10:00:00+05:00'
+    phone: '+923005550131'

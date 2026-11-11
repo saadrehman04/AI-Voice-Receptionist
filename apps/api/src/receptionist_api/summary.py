@@ -18,7 +18,8 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
-Outcome = Literal["booked", "rescheduled", "cancelled", "message", "handoff", "no_action"]
+from receptionist_shared.outcome import Outcome, ToolOutcome, outcome_from_tools
+
 Sentiment = Literal["positive", "neutral", "negative"]
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -30,37 +31,11 @@ class TranscriptLine:
     text: str
 
 
-@dataclass(frozen=True)
-class ToolOutcome:
-    name: str
-    ok: bool
-    result: dict[str, Any]
-
-
 class Analysis(BaseModel):
     summary: str = Field(max_length=600)
     intent: str = Field(max_length=32)
     sentiment: Sentiment
     outcome: Outcome = "no_action"
-
-
-def outcome_from_tools(tools: Sequence[ToolOutcome]) -> Outcome:
-    """What actually happened, from successful tool results (last decisive one wins)."""
-    outcome: Outcome = "no_action"
-    for t in tools:
-        if not t.ok:
-            continue
-        if t.name == "create_booking" and t.result.get("booked") is True:
-            outcome = "booked"
-        elif t.name == "reschedule_booking" and t.result.get("rescheduled") is True:
-            outcome = "rescheduled"
-        elif t.name == "cancel_booking" and t.result.get("cancelled") is True:
-            outcome = "cancelled"
-        elif t.name == "transfer_to_human":
-            outcome = "handoff"
-        elif t.name == "take_message" and outcome == "no_action":
-            outcome = "message"
-    return outcome
 
 
 _INTENT_BY_OUTCOME = {
@@ -152,3 +127,15 @@ class GroqSummarizer:
             logger.warning("LLM summary failed, using heuristic", error=type(exc).__name__)
             return await self._fallback.analyze(business, lines, tools)
         return analysis
+
+
+__all__ = [
+    "Analysis",
+    "GroqSummarizer",
+    "HeuristicSummarizer",
+    "Outcome",
+    "Summarizer",
+    "ToolOutcome",
+    "TranscriptLine",
+    "outcome_from_tools",
+]

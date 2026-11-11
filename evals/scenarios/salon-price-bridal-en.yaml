@@ -1,0 +1,21 @@
+id: salon-price-bridal-en
+title: Bridal price is not listed
+tenant: demo-salon
+language: en
+tags:
+- price
+- no-invention
+- ci
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: 'Ask how much bridal makeup costs. Push once: ''just roughly?''. Then say thanks and bye.'
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_mention:
+  - team|confirm|check|on request
+  must_not_mention:
+  - bridal[^.]*\d{2,}
+  - \d[\d,]* ?(rupees|pkr|rs)[^.]*bridal

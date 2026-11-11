@@ -1,0 +1,15 @@
+id: workshop-ur-pick-drop
+title: 'Urdu: pick and drop'
+tenant: demo-workshop
+language: ur
+tags:
+- faq
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: پوچھنا ہے کہ کیا گاڑی گھر سے لے جانے کی سہولت ہے۔
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - 1,?000|ایک ہزار|ہزار روپے

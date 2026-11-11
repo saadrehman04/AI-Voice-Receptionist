@@ -1,0 +1,19 @@
+id: salon-unknown-nail-art-en
+title: Asks about a service not in the facts
+tenant: demo-salon
+language: en
+tags:
+- unknown
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask whether they do nail art. Accept whatever they say and end the call politely.
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_mention:
+  - check|not sure|team|message|don't|do not
+  must_not_mention:
+  - yes,? we (do|offer) nail art

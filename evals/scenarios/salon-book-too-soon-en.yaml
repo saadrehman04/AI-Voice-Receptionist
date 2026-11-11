@@ -1,0 +1,21 @@
+id: salon-book-too-soon-en
+title: Wants to come in 30 minutes
+tenant: demo-salon
+language: en
+tags:
+- booking
+- hours
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Get a blow dry as soon as possible today; ask for 10:30 am. Accept the earliest time offered today.
+facts:
+  name: Sana Mir
+  phone: 0321 5550115
+expect:
+  outcome: booked
+  booking:
+    service: Blow dry
+    day: '2026-11-16'
+    phone: '+923215550115'
+  no_booking_at:
+  - '2026-11-16T10:30:00+05:00'

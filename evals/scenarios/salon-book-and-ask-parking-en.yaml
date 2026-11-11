@@ -1,0 +1,21 @@
+id: salon-book-and-ask-parking-en
+title: Books, then asks about parking
+tenant: demo-salon
+language: en
+tags:
+- booking
+- faq
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a facial on Sunday at 3 pm, then ask if there is parking.
+facts:
+  name: Laiba Akhtar
+  phone: 0333 5550117
+expect:
+  outcome: booked
+  booking:
+    service: Facial
+    start: '2026-11-22T15:00:00+05:00'
+    phone: '+923335550117'
+  must_mention:
+  - parking

@@ -1,0 +1,18 @@
+id: salon-unknown-vouchers-message-en
+title: Unknown question, leaves a message
+tenant: demo-salon
+language: en
+tags:
+- unknown
+- message
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask if they sell gift vouchers. When they can't answer, leave a message asking the team to call
+  back about vouchers.
+facts:
+  name: Shazia Karim
+  phone: 0300 5550121
+expect:
+  outcome: message
+  tools_called:
+  - take_message

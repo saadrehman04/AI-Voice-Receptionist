@@ -1,0 +1,20 @@
+id: workshop-ur-sunday-closed
+title: 'Urdu: asks for Sunday'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+- hours
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: اتوار کو آئل چینج کروانا ہے؛ اگر اتوار بند ہو تو پیر صبح دس بجے کروا لیں۔
+facts:
+  نام: بلال احمد
+  فون: 0333 5550133
+expect:
+  outcome: booked
+  booking:
+    service: Oil change
+    start: '2026-11-23T10:00:00+05:00'
+    phone: '+923335550133'

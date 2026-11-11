@@ -1,0 +1,18 @@
+id: salon-handoff-asks-human-en
+title: Asks for a person
+tenant: demo-salon
+language: en
+tags:
+- handoff
+- ci
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask to speak to a real person about a complaint; insist politely if asked what it's about.
+facts:
+  name: Rubina Hafeez
+  phone: 0300 5550122
+expect:
+  outcome: handoff
+  tools_called:
+  - transfer_to_human

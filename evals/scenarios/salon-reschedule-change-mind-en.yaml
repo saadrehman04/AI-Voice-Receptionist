@@ -1,0 +1,26 @@
+id: salon-reschedule-change-mind-en
+title: Starts to reschedule, then keeps the booking
+tenant: demo-salon
+language: en
+tags:
+- reschedule
+- safety
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask to move your Thursday 12 noon facial, but when the new time is read back say you'd rather keep
+  the original time after all.
+facts:
+  name: Nadia Pervez
+  phone: 0321 5550125
+seed_bookings:
+- service: Facial
+  start: '2026-11-19T12:00:00+05:00'
+  caller_name: Nadia Pervez
+  phone: '+923215550125'
+expect:
+  outcome: no_action
+  booking:
+    service: Facial
+    start: '2026-11-19T12:00:00+05:00'
+    phone: '+923215550125'
+  tools_not_called: []

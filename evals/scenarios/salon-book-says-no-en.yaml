@@ -1,0 +1,19 @@
+id: salon-book-says-no-en
+title: Says no at the read-back and hangs up
+tenant: demo-salon
+language: en
+tags:
+- booking
+- safety
+- ci
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask to book a haircut on Thursday at 11 am, but when the details are read back say no, you've changed
+  your mind and don't want to book after all. Then say goodbye.
+facts:
+  name: Asma Riaz
+  phone: 0300 5550120
+expect:
+  outcome: no_action
+  no_booking_at:
+  - '2026-11-19T11:00:00+05:00'

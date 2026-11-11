@@ -1,0 +1,20 @@
+id: salon-book-short-answers-en
+title: Mumbled, very short answers
+tenant: demo-salon
+language: en
+tags:
+- booking
+- short-answers
+now: '2026-11-16T10:00:00+05:00'
+persona: 'Says as little as possible: one or two words per reply, no greetings, e.g. ''haircut'', ''wednesday'',
+  ''4'', ''yes''.'
+goal: Book a haircut on Wednesday at 4 pm, answering in one or two words only.
+facts:
+  name: Iqra
+  phone: 0300 5550109
+expect:
+  outcome: booked
+  booking:
+    service: Haircut
+    start: '2026-11-18T16:00:00+05:00'
+    phone: '+923005550109'

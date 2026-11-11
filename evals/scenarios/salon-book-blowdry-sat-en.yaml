@@ -1,0 +1,19 @@
+id: salon-book-blowdry-sat-en
+title: Blow dry on Saturday morning
+tenant: demo-salon
+language: en
+tags:
+- booking
+- simple
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a blow dry this Saturday at 11 in the morning.
+facts:
+  name: Maryam Iqbal
+  phone: 0300 5550103
+expect:
+  outcome: booked
+  booking:
+    service: Blow dry
+    start: '2026-11-21T11:00:00+05:00'
+    phone: '+923005550103'

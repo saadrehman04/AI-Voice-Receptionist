@@ -1,0 +1,21 @@
+id: workshop-ur-wrong-phone
+title: 'Urdu: wrong number then correction'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+- correction
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: 'جمعرات صبح دس بجے جنرل سروس بک کروانی ہے۔ نمبر پہلے 0321 5550104 بتانا ہے، پھر فوراً درست کرنا
+  ہے: صحیح نمبر 0321 5550140 ہے۔'
+facts:
+  نام: عثمان غنی
+  فون: 0321 5550140
+expect:
+  outcome: booked
+  booking:
+    service: General service
+    start: '2026-11-19T10:00:00+05:00'
+    phone: '+923215550140'

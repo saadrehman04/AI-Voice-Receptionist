@@ -1,0 +1,22 @@
+id: salon-book-closed-tuesday-en
+title: Asks for a closed day
+tenant: demo-salon
+language: en
+tags:
+- booking
+- hours
+- ci
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a haircut on Tuesday at 2 pm. If Tuesday is not possible, take Wednesday at 2 pm.
+facts:
+  name: Saba Noor
+  phone: 0300 5550111
+expect:
+  outcome: booked
+  booking:
+    service: Haircut
+    start: '2026-11-18T14:00:00+05:00'
+    phone: '+923005550111'
+  must_mention:
+  - closed|not open|don't open|aren't open

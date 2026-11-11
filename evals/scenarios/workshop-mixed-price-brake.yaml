@@ -1,0 +1,15 @@
+id: workshop-mixed-price-brake
+title: 'Roman Urdu: brake price'
+tenant: demo-workshop
+language: mixed
+tags:
+- price
+- mixed
+now: '2026-11-16T10:00:00+05:00'
+persona: Roman Urdu mixed with English.
+goal: 'Ask in Roman Urdu: ''brake inspection kitne ki hai?'''
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - 2,?000|do hazaar|دو ہزار|two thousand

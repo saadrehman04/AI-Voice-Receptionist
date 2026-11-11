@@ -1,0 +1,17 @@
+id: workshop-ur-handoff
+title: 'Urdu: wants the supervisor'
+tenant: demo-workshop
+language: ur
+tags:
+- handoff
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: سپروائزر سے بات کرنی ہے، گاڑی کے بل کے بارے میں۔
+facts:
+  نام: جاوید اقبال
+  فون: 0333 5550137
+expect:
+  outcome: handoff
+  tools_called:
+  - transfer_to_human

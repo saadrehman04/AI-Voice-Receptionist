@@ -1,0 +1,19 @@
+id: workshop-ur-book-general-service
+title: 'Urdu: general service Wednesday'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: بدھ کو صبح نو بجے جنرل سروس کروانی ہے۔
+facts:
+  نام: فیصل محمود
+  فون: 0321 5550132
+expect:
+  outcome: booked
+  booking:
+    service: General service
+    start: '2026-11-18T09:00:00+05:00'
+    phone: '+923215550132'

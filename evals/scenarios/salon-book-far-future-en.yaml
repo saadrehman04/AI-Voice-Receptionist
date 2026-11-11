@@ -1,0 +1,21 @@
+id: salon-book-far-future-en
+title: Asks for a date months away
+tenant: demo-salon
+language: en
+tags:
+- booking
+- limits
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book bridal makeup for the 20th of March next year. If it can't be booked that far ahead, ask them
+  to pass a message to the team and give your details.
+facts:
+  name: Hira Shah
+  phone: 0300 5550116
+expect:
+  outcome:
+  - message
+  - no_action
+  - handoff
+  tools_not_called:
+  - create_booking

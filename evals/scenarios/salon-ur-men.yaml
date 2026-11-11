@@ -1,0 +1,17 @@
+id: salon-ur-men
+title: 'Urdu: asks if men are served'
+tenant: demo-salon
+language: ur
+tags:
+- faq
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتی ہیں۔
+goal: پوچھنا ہے کہ کیا شوہر کا بھی ہیئر کٹ ہو سکتا ہے۔
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - خواتین
+  tools_not_called:
+  - create_booking

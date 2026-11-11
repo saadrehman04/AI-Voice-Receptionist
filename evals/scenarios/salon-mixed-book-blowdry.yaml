@@ -1,0 +1,21 @@
+id: salon-mixed-book-blowdry
+title: 'Urdu-English mix: blow dry'
+tenant: demo-salon
+language: mixed
+tags:
+- booking
+- mixed
+- ci
+now: '2026-11-16T10:00:00+05:00'
+persona: Speaks Roman Urdu mixed with English, casual.
+goal: Mix Urdu and English (Roman Urdu) to book a blow dry on Sunday at 12 noon, e.g. 'Sunday ko 12 baje
+  blow dry book kar dein'.
+facts:
+  name: Mahnoor Ali
+  phone: 0333 5550130
+expect:
+  outcome: booked
+  booking:
+    service: Blow dry
+    start: '2026-11-22T12:00:00+05:00'
+    phone: '+923335550130'

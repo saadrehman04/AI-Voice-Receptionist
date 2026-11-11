@@ -1,0 +1,16 @@
+id: salon-faq-men-en
+title: Asks if men are served
+tenant: demo-salon
+language: en
+tags:
+- faq
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask whether your husband can get a haircut there.
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - ladies|women|female
+  tools_not_called:
+  - create_booking

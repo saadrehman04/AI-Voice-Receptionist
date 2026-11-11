@@ -1,0 +1,20 @@
+id: salon-book-facial-en
+title: Facial on Thursday afternoon
+tenant: demo-salon
+language: en
+tags:
+- booking
+- simple
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a facial on Thursday at 4 pm.
+facts:
+  name: Hina Malik
+  phone: 0333 5550102
+expect:
+  outcome: booked
+  booking:
+    service: Facial
+    start: '2026-11-19T16:00:00+05:00'
+    caller_name: Hina Malik
+    phone: '+923335550102'

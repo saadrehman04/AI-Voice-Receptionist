@@ -1,0 +1,19 @@
+id: salon-angry-caller-en
+title: Angry about a bad haircut
+tenant: demo-salon
+language: en
+tags:
+- handoff
+- angry
+now: '2026-11-16T10:00:00+05:00'
+persona: Angry and impatient, but not abusive. Wants the manager.
+goal: Complain angrily that your last haircut was terrible and you want the manager to call you back.
+facts:
+  name: Tahira Gul
+  phone: 0321 5550123
+expect:
+  outcome:
+  - handoff
+  - message
+  tools_not_called:
+  - create_booking

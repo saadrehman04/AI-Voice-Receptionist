@@ -1,0 +1,18 @@
+id: workshop-ur-angry
+title: 'Urdu: angry, car not ready'
+tenant: demo-workshop
+language: ur
+tags:
+- handoff
+- angry
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: غصے میں ہیں لیکن گالی نہیں دیتے۔ صرف اردو۔
+goal: غصے میں شکایت کرنی ہے کہ گاڑی دو دن سے تیار نہیں ہوئی، اور سپروائزر کال کرے۔
+facts:
+  نام: طارق محمود
+  فون: 0345 5550138
+expect:
+  outcome:
+  - handoff
+  - message

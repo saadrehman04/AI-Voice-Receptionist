@@ -1,0 +1,22 @@
+id: salon-book-wrong-phone-en
+title: Wrong phone number, then a correction
+tenant: demo-salon
+language: en
+tags:
+- booking
+- correction
+- ci
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: 'Book a facial on Wednesday at 12 noon. When asked for your number, first say 0300 5550170, then
+  immediately correct yourself: the right number is 0300 5550107.'
+facts:
+  name: Nida Khan
+  phone: 0300 5550107
+expect:
+  outcome: booked
+  booking:
+    service: Facial
+    start: '2026-11-18T12:00:00+05:00'
+    phone: '+923005550107'

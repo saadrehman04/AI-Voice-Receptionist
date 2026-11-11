@@ -1,0 +1,22 @@
+id: workshop-ur-cancel
+title: 'Urdu: cancels a booking'
+tenant: demo-workshop
+language: ur
+tags:
+- cancel
+- urdu
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: جمعرات صبح گیارہ بجے والی اے سی گیس ریفل کی بکنگ کینسل کروانی ہے۔
+facts:
+  نام: کامران شاہ
+  فون: 0300 5550135
+seed_bookings:
+- service: AC gas refill
+  start: '2026-11-19T11:00:00+05:00'
+  caller_name: Kamran Shah
+  phone: '+923005550135'
+expect:
+  outcome: cancelled
+  tools_called:
+  - cancel_booking

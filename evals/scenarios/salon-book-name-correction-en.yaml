@@ -1,0 +1,22 @@
+id: salon-book-name-correction-en
+title: Corrects the name at read-back
+tenant: demo-salon
+language: en
+tags:
+- booking
+- correction
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: 'Book a blow dry on Thursday at 1 pm. Give your name as Sara. When the details are read back, say
+  no: it''s Sarah, with an h at the end. Then confirm.'
+facts:
+  name: Sarah
+  phone: 0333 5550108
+expect:
+  outcome: booked
+  booking:
+    service: Blow dry
+    start: '2026-11-19T13:00:00+05:00'
+    caller_name: Sarah
+    phone: '+923335550108'

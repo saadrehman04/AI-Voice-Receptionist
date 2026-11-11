@@ -1,0 +1,15 @@
+id: workshop-en-warranty
+title: 'English: warranty'
+tenant: demo-workshop
+language: en
+tags:
+- faq
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask what warranty you get on repairs.
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - 30|thirty
+  - labou?r

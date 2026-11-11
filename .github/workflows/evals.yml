@@ -1,0 +1,74 @@
+name: Evals
+
+# The simulated-caller suite (Phase 6): the agent brain in text mode, against real LLMs.
+# Runs the `ci` subset on PRs that touch the agent, and fails the PR if booking accuracy drops
+# more than 2 points below evals/baseline.json. Needs GROQ_API_KEY and GEMINI_API_KEY as
+# repository secrets (Settings -> Secrets and variables -> Actions); without them it skips.
+
+on:
+  pull_request:
+    paths:
+      - "apps/agent/**"
+      - "packages/shared/**"
+      - "evals/**"
+      - "tenants/**"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Scenario tags to run (empty = all)"
+        default: "ci"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    name: simulated callers
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Check for API keys
+        id: keys
+        run: |
+          if [ -z "$GROQ_API_KEY" ] || [ -z "$GEMINI_API_KEY" ]; then
+            echo "::notice::GROQ_API_KEY / GEMINI_API_KEY secrets are not set; skipping evals."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.keys.outputs.skip != 'true'
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        if: steps.keys.outputs.skip != 'true'
+        with:
+          enable-cache: true
+
+      - name: Install
+        if: steps.keys.outputs.skip != 'true'
+        run: uv sync --all-packages --locked
+
+      - name: Run evals
+        if: steps.keys.outputs.skip != 'true'
+        env:
+          TAGS: ${{ github.event.inputs.tags || 'ci' }}
+        run: |
+          uv run --all-packages receptionist-evals ${TAGS:+--tags $TAGS} --retries 1 \
+            --baseline evals/baseline.json --max-drop 2
+
+      - name: Scorecard in the job summary
+        if: always() && steps.keys.outputs.skip != 'true'
+        run: cat evals/results/*/scorecard.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.keys.outputs.skip != 'true'
+        with:
+          name: eval-scorecard
+          path: evals/results/

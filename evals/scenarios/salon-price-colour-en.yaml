@@ -1,0 +1,15 @@
+id: salon-price-colour-en
+title: Hair colour price depends on length
+tenant: demo-salon
+language: en
+tags:
+- price
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask how much hair colour costs.
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - 8,?000|eight thousand
+  - length

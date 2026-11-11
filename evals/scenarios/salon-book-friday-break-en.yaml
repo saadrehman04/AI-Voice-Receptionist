@@ -1,0 +1,21 @@
+id: salon-book-friday-break-en
+title: Asks for the Friday break
+tenant: demo-salon
+language: en
+tags:
+- booking
+- hours
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a blow dry on Friday at 1:30 pm. If not possible, take Friday at 3 pm.
+facts:
+  name: Mehwish Javed
+  phone: 0345 5550113
+expect:
+  outcome: booked
+  booking:
+    service: Blow dry
+    start: '2026-11-20T15:00:00+05:00'
+    phone: '+923455550113'
+  no_booking_at:
+  - '2026-11-20T13:30:00+05:00'

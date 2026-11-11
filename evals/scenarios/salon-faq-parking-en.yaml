@@ -1,0 +1,15 @@
+id: salon-faq-parking-en
+title: Parking question
+tenant: demo-salon
+language: en
+tags:
+- faq
+- audio
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask if there is parking near the salon.
+facts: {}
+expect:
+  outcome: no_action
+  must_mention:
+  - free parking|parking (is )?free|park for free

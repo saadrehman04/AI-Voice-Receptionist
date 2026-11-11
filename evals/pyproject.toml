@@ -1,10 +1,14 @@
 [project]
 name = "receptionist-evals"
 version = "0.1.0"
-description = "Simulated-caller eval suite (built in Phase 6)."
+description = "Simulated-caller eval suite: scenarios, simulated callers, scorers, scorecards."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "receptionist-shared",
+    "receptionist-agent",
+    "httpx2>=2.16.0",
+    "loguru>=0.7",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

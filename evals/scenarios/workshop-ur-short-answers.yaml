@@ -1,0 +1,20 @@
+id: workshop-ur-short-answers
+title: 'Urdu: very short answers'
+tenant: demo-workshop
+language: ur
+tags:
+- booking
+- urdu
+- short-answers
+now: '2026-11-16T10:00:00+05:00'
+persona: 'بہت کم بولتے ہیں: ہر جواب ایک دو لفظ، جیسے ''بریک''، ''پیر''، ''بارہ''، ''جی''۔'
+goal: پیر کو دوپہر بارہ بجے بریک چیک اپ کروانا ہے، ہر جواب ایک دو لفظوں میں۔
+facts:
+  نام: شاہد
+  فون: 0300 5550139
+expect:
+  outcome: booked
+  booking:
+    service: Brake inspection
+    start: '2026-11-16T12:00:00+05:00'
+    phone: '+923005550139'

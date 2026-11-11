@@ -1,0 +1,18 @@
+id: workshop-en-diagnostics-price
+title: 'English: diagnostics price not listed'
+tenant: demo-workshop
+language: en
+tags:
+- price
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Ask how much engine diagnostics costs, and press for a rough figure once.
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_not_mention:
+  - diagnostic[^.]*\d{3,}
+  - \d{3,}[^.]*diagnostic

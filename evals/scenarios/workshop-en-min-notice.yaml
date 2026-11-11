@@ -1,0 +1,21 @@
+id: workshop-en-min-notice
+title: 'English: wants a slot in one hour'
+tenant: demo-workshop
+language: en
+tags:
+- booking
+- limits
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Get an oil change today; ask for 11 am. Accept the earliest time offered today.
+facts:
+  name: Owais Qureshi
+  phone: 0345 5550142
+expect:
+  outcome: booked
+  booking:
+    service: Oil change
+    day: '2026-11-16'
+    phone: '+923455550142'
+  no_booking_at:
+  - '2026-11-16T11:00:00+05:00'

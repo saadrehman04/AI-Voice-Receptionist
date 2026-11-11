@@ -1,0 +1,18 @@
+id: workshop-en-book-brake-sat
+title: 'English: brake inspection Saturday'
+tenant: demo-workshop
+language: en
+tags:
+- booking
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a brake inspection this Saturday at 11 am.
+facts:
+  name: Adeel Hussain
+  phone: 0333 5550141
+expect:
+  outcome: booked
+  booking:
+    service: Brake inspection
+    start: '2026-11-21T11:00:00+05:00'
+    phone: '+923335550141'

@@ -1,0 +1,19 @@
+id: salon-book-unknown-service-en
+title: Asks for a service that isn't offered
+tenant: demo-salon
+language: en
+tags:
+- booking
+- unknown
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book a pedicure on Wednesday. If they don't do pedicures, book a facial on Wednesday at 5 pm instead.
+facts:
+  name: Kiran Aziz
+  phone: 0321 5550119
+expect:
+  outcome: booked
+  booking:
+    service: Facial
+    start: '2026-11-18T17:00:00+05:00'
+    phone: '+923215550119'

@@ -1,0 +1,21 @@
+id: workshop-en-saturday-afternoon
+title: 'English: Saturday after closing'
+tenant: demo-workshop
+language: en
+tags:
+- booking
+- hours
+now: '2026-11-16T10:00:00+05:00'
+persona: Polite and clear. Answers what is asked, one thing at a time.
+goal: Book an AC gas refill on Saturday at 4 pm. If not possible, take Saturday at 1 pm.
+facts:
+  name: Junaid Iqbal
+  phone: 0300 5550143
+expect:
+  outcome: booked
+  booking:
+    service: AC gas refill
+    start: '2026-11-21T13:00:00+05:00'
+    phone: '+923005550143'
+  no_booking_at:
+  - '2026-11-21T16:00:00+05:00'

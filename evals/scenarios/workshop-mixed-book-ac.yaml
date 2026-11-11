@@ -1,0 +1,20 @@
+id: workshop-mixed-book-ac
+title: 'Roman Urdu: AC gas refill'
+tenant: demo-workshop
+language: mixed
+tags:
+- booking
+- mixed
+now: '2026-11-16T10:00:00+05:00'
+persona: Roman Urdu mixed with English, casual.
+goal: In Roman Urdu mixed with English, book an AC gas refill on Thursday at 11, e.g. 'Thursday ko 11
+  baje AC gas refill karwani hai'.
+facts:
+  name: Zeeshan Ahmed
+  phone: 0321 5550144
+expect:
+  outcome: booked
+  booking:
+    service: AC gas refill
+    start: '2026-11-19T11:00:00+05:00'
+    phone: '+923215550144'

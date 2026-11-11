@@ -1,0 +1,19 @@
+id: workshop-ur-price-diagnostics
+title: 'Urdu: diagnostics price not listed'
+tenant: demo-workshop
+language: ur
+tags:
+- price
+- urdu
+- no-invention
+now: '2026-11-16T10:00:00+05:00'
+persona: صرف اردو میں بات کرتے ہیں، سیدھی بات۔
+goal: انجن ڈائیگناسٹک کی قیمت پوچھنی ہے۔
+facts: {}
+expect:
+  outcome:
+  - no_action
+  - message
+  must_not_mention:
+  - ڈائیگناسٹک[^۔]*\d{3,}
+  - \d{3,}[^۔]*ڈائیگناسٹک
