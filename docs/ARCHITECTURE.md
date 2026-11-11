@@ -11,7 +11,7 @@ flowchart LR
     subgraph agent["apps/agent - Pipecat voice agent (Python)"]
         direction LR
         vad[VAD<br/>Silero] --> stt[STT<br/>Groq Whisper<br/>| faster-whisper]
-        stt --> llm[LLM<br/>Groq<br/>| Gemini | Ollama]
+        stt --> llm[LLM<br/>Groq gpt-oss + fallback<br/>| Gemini | Ollama]
         llm --> tts[TTS<br/>Kokoro<br/>| Piper]
     end
 
@@ -72,7 +72,13 @@ flowchart LR
   tools validate input, go through `CallState` (which enforces read-back-then-confirm, see D11) and
   read/write through a `BookingBackend` (an in-memory stub now; the api in Phase 3).
   `knowledge.py` answers only from config. `text_session.py` runs the same brain without audio
-  (`make chat`, and the Phase 6 evals).
+  (`make chat`, and the Phase 6 evals). A commit (`caller_confirmed=true`) also needs a caller turn
+  after the read-back, counted from the LLM context (D24).
+- **LLM fallback (D23):** the Groq LLM's OpenAI client sends through `FallbackTransport`
+  (`llm_fallback.py`). Each request goes to the first target with free-tier budget left
+  (gpt-oss-120b -> gpt-oss-20b -> Gemini Flash-Lite via its OpenAI-compatible endpoint), and moves
+  on at once on a 429/5xx, so the pipeline always sees one ordinary streamed reply. For Gemini it
+  adds placeholder thought signatures and repairs the tool-call stream.
 - **Languages:** `CallerLanguageTracker` notes the caller's language from each transcript (Urdu or
   Hindi script -> Urdu); `ReplyLanguageRouter` holds each reply until its first letter shows its
   script, then switches the TTS (Urdu -> Piper `ur_PK`, else Kokoro) before any text is spoken.

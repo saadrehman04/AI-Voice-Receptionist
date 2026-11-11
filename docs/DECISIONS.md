@@ -49,7 +49,10 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** our own FastAPI signaling server (more code to keep in sync with Pipecat);
   a custom Next.js client now (the dashboard's test-call button comes in Phase 7).
 
-## D7. Default models (Phase 1, checked against provider model lists on 2026-11-11)
+## D7. Default models (Phase 1) - LLM choice replaced by D23
+> The Llama model below came from Groq's docs, checked without a key. The live model list
+> (with a key) showed Groq had retired it; see D23.
+
 - **Decision:** LLM `llama-3.3-70b-versatile` on Groq; STT `whisper-large-v3-turbo` on Groq;
   backup LLM `gemini-3.5-flash-lite`; TTS Kokoro `af_heart`; offline STT faster-whisper `small`
   (int8 on CPU); offline LLM Ollama `llama3.2:3b`. All overridable in `.env`.
@@ -210,3 +213,39 @@ Short entries, newest last: what we decided, why, and what else we considered.
   acceptable, freezing a caller is not.
 - **Alternatives:** synchronous writes per turn (latency on the audio path); writing everything at
   hang-up only (a crash loses the whole call).
+
+## D23. Main LLM gpt-oss-120b on Groq, with an HTTP-level fallback for free-tier limits (Phase 2)
+- **Decision:** `openai/gpt-oss-120b` with `reasoning_effort=low` as the main LLM. Every request
+  goes through `FallbackTransport` (llm_fallback.py), an httpx2 transport under the OpenAI client:
+  on a 429, 5xx or connection error it re-sends the same request at once to the next target
+  (`LLM_FALLBACKS`, default Groq gpt-oss-20b, then Gemini 3.5 Flash-Lite through Google's
+  OpenAI-compatible endpoint). It skips a target while its `retry-after` or Groq's token-budget
+  headers say it is exhausted.
+- **Why (measured 2026-11-11):** Groq had retired Llama; the tool-capable models left are gpt-oss
+  and Qwen. gpt-oss-120b: first token about 0.45 s, correct tool calls, natural Urdu. But Groq's
+  free tier is 8,000 tokens/min *per model*, our request is about 1,500 tokens, and a tool turn
+  makes 2-3 requests. One model ran dry after 1-2 turns and the client then slept on
+  `retry-after` (10-25 s turns). Gemini Flash-Lite has room but is slower (1.2-6 s to first
+  token). The fallback keeps the fast model for most turns and never leaves the caller in silence:
+  4/4 English and Urdu booking runs passed back to back with turns of mostly 1.3-3.3 s.
+- **Why below the client:** the pipeline sees one normal streamed reply, so no turn is lost.
+  Pipecat's `ServiceSwitcher` failover only switches after a service is marked unusable and does
+  not re-send the request that failed.
+- **Gemini repairs (found live):** Gemini 3 rejects earlier tool calls without a
+  `thought_signature`, so we add Google's documented placeholder. Its streamed tool calls have no
+  `index`, which made Pipecat invent an empty-named call and then silenced the call, so the
+  transport rewrites the stream. An end-to-end test through the real OpenAI SDK and Pipecat
+  guards this.
+- **Alternatives:** Gemini as main (better instruction-following in our runs, but 3-4x slower to
+  first token); rotating between Groq models round-robin (wastes the best model); waiting on
+  `retry-after` (dead air); a paid Groq tier (not allowed by the free-tools rule).
+
+## D24. A booking commit needs a new caller turn since the read-back (Phase 2)
+- **Decision:** `CallState.require_prepared` refuses `caller_confirmed=true` unless the caller has
+  spoken since the read-back. The tool glue counts caller messages in the LLM context
+  (`count_caller_turns`), so the count is the conversation itself, not a guess.
+- **Why:** in the first live run gpt-oss-120b read the details back and confirmed them in the same
+  turn, inventing the caller's "yes". The prompt already forbade it; only code can guarantee it.
+  This applies to book, reschedule and cancel.
+- **Alternatives:** prompt wording only (the model ignored it); one tool call per LLM response
+  (hurts normal multi-tool turns).

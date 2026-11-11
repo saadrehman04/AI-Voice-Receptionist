@@ -4,7 +4,7 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 
 - [x] Phase 0: Scaffold the monorepo
 - [ ] Phase 1: Voice loop in the browser
-- [ ] Phase 2: The receptionist brain
+- [x] Phase 2: The receptionist brain
 - [ ] Phase 3: Real tools and safe booking
 - [ ] Phase 4: Backend, multi-tenancy and call records
 - [ ] Phase 5: Latency and barge-in
@@ -33,12 +33,17 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
   (`make test-models`: Kokoro 3.2 s for 3.1 s of speech; Piper Urdu 0.3 s for 2.9 s; whisper-small 4.6 s).
 - Open: the 2-minute spoken conversation needs GROQ_API_KEY and a person at the microphone.
 
-### Phase 2 (receptionist brain): built, waiting on a live-LLM check
+### Phase 2 (receptionist brain): done 2026-11-11
 - Built: tenant YAML schema + 2 example tenants; prompt from tenant facts; CallState with
   read-back-then-confirm enforced in code; 8 tools; Urdu/English TTS routing (Piper ur_PK for Urdu);
   text-mode session + `make chat`; ScriptedLLM for deterministic conversation tests.
-- Open: greet / FAQ / refuse-unknown-price / tool-timing checks with a real LLM (needs GROQ_API_KEY;
-  Phase 6 automates them).
+- Verified live (docs/evidence/phase2-chat.md): greets with the business name, hours and FAQ from
+  the YAML, refuses the unlisted bridal price, "will check" + message for an unknown question,
+  check -> read back -> book only after "yes". English and Urdu booking runs pass 4/4.
+- Found live and fixed: Groq had retired Llama 3.3 (now gpt-oss-120b, D23); the model confirmed
+  its own read-back, so a commit now needs a new caller turn (D24); 8k tokens/min per Groq model
+  stalled calls 10-25 s, so an HTTP-level fallback goes gpt-oss-120b -> gpt-oss-20b -> Gemini (D23).
+- Open: model answers still vary run to run; Phase 6's eval suite measures that properly.
 
 ### Phase 3 (real tools, safe booking): built, waiting on Google Calendar + a live call
 - Built: tools served by the api; Redis holds, idempotency keys, re-check, Postgres exclusion
