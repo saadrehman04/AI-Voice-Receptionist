@@ -16,6 +16,26 @@ jobs:
     name: lint + test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Real Postgres + Redis: the double-booking guarantees live there, so CI must test them.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: receptionist
+          POSTGRES_PASSWORD: receptionist
+          POSTGRES_DB: receptionist
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U receptionist" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s
+          --health-retries 10
+    env:
+      REQUIRE_SERVICES: "1"  # database tests must run, never skip, in CI
     steps:
       - uses: actions/checkout@v7
 

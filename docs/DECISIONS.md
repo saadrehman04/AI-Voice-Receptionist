@@ -118,3 +118,48 @@ Short entries, newest last: what we decided, why, and what else we considered.
   in under a second), while still catching wiring mistakes a pure unit test would miss.
 - **Alternatives:** mocking the LLM client (brittle, tied to the OpenAI wire format); only live-LLM
   evals (slow, rate-limited, non-deterministic; they come in Phase 6 on top of this).
+
+## D14. Tools live in the api; the agent calls them over HTTP (Phase 3)
+- **Decision:** availability, holds, bookings, messages and knowledge lookups are api endpoints
+  (`/v1/tenants/{slug}/...`), authenticated with a shared `X-Agent-Token`. The agent's
+  `ApiBackend` implements the same `BookingBackend` interface as the in-memory stub, so tools,
+  tests and `make chat` didn't change. Request/response models live in `receptionist_shared`.
+- **Why:** one place owns state (DB, Redis, calendar), so several agent processes (and later the
+  WhatsApp bridge) share one source of truth. The agent stays stateless and restartable.
+- **Alternatives:** the agent talking to Postgres and Google directly (every agent process holds DB
+  connections and credentials; logic duplicated when the dashboard needs the same rules).
+
+## D15. Double booking is impossible, not just unlikely (Phase 3)
+- **Decision:** four layers. (1) A Redis hold on every 15-minute bucket the slot plus buffer touches,
+  taken at read-back, 2-minute expiry, acquired atomically with a Lua script. (2) Idempotency keys
+  (unique per tenant in Postgres; also used as the Google event id). (3) A fresh calendar + DB check
+  right before writing. (4) A Postgres exclusion constraint:
+  `EXCLUDE USING gist (tenant_id WITH =, guard WITH &&) WHERE status = 'confirmed'`, where
+  `guard` is the booking widened by half the buffer on each side.
+- **Why:** layers 1-3 make conflicts rare and give the caller a friendly "someone is booking that
+  right now"; layer 4 is the guarantee, enforced by the database under any concurrency. The race
+  tests run five simultaneous bookings for one slot, and a variant that skips Redis and the re-check
+  entirely, against real Postgres: exactly one wins every time.
+- **Alternatives:** a Redis lock alone (fails if Redis restarts or a lock expires mid-write);
+  `SELECT ... FOR UPDATE` on a slots table (needs pre-generated slot rows; awkward with variable
+  service lengths); serializable transactions (retries everywhere).
+
+## D16. Calendar write inside the DB transaction, with compensation (Phase 3)
+- **Decision:** insert the booking row (the constraint fires), then create the Google event, then
+  commit. If Google fails, the row rolls back. If the commit fails after the event exists, we delete
+  the event. If the calendar is unreachable, nothing is offered or written.
+- **Why:** the two systems can't share a transaction, so we order the steps so every failure leaves
+  them consistent, and we fail toward "no booking + take a message", never toward a phantom booking.
+- **Alternatives:** an outbox table + worker (more robust under crashes; worth it when calendar
+  writes become slow or batched. Noted for Phase 9).
+
+## D17. Knowledge base: YAML facts first, then local multilingual embeddings (Phase 3)
+- **Decision:** `lookup_business_info` answers from the tenant YAML first (exact), then from
+  `tenants/kb/<slug>/*.md` split by heading and searched with
+  `paraphrase-multilingual-MiniLM-L12-v2` via fastembed (ONNX on CPU, 0.22 GB, Apache-2.0).
+  Below a similarity threshold it returns `found=false`. If the model is off or missing, sections
+  are ranked by word overlap.
+- **Why:** free, offline, small enough for a laptop, and multilingual, so an Urdu question can
+  match an English note. In-memory vectors are plenty for a few dozen sections per tenant.
+- **Alternatives:** pgvector (worth it at thousands of chunks); a hosted embedding API (cost, and
+  an extra network hop on the call path); keyword-only search (misses paraphrases).

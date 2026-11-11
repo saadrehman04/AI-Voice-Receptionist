@@ -48,9 +48,10 @@ Run from the repo root. `make help` lists everything.
 - `make agent`: voice agent on :7860 (`uv run --all-packages python -m receptionist_agent`); talk at http://localhost:7860/client. Must run as `python -m` (Pipecat's runner finds `bot` on `__main__`)
 - `make chat`: text chat with the receptionist (real LLM + tools, stub bookings; `ARGS="--tenant demo-workshop"`); needs GROQ_API_KEY
 - `make latency`: P50/P95 per stage from logs/turns.jsonl (`ARGS="--last 50"`)
+- `make migrate`: apply Alembic migrations to DATABASE_URL (run after `make up`)
 - `make api`: FastAPI on 127.0.0.1:8000 with reload in dev (`receptionist-api`); docs at /docs
 - `make web`: Next.js dev server on :3000 (`pnpm --dir apps/web dev`)
-- `make test`: pytest, fast, no network or model downloads (tests marked `models` are skipped)
+- `make test`: pytest, no network or model downloads (tests marked `models` are skipped). Needs `make up` for the Postgres/Redis tests; they skip without it (CI sets REQUIRE_SERVICES=1 so they never skip there)
 - `make test-models`: opt-in smoke test of local Kokoro + faster-whisper on CPU (downloads ~0.6 GB once)
 - Single test: `uv run --all-packages pytest apps/api/tests/test_health.py -k ok`
 - `make lint`: ruff check, ruff format --check, mypy (strict), eslint, `next typegen && tsc --noEmit`

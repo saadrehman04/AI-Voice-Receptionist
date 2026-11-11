@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 2 (receptionist brain with stub tools). The api, real calendar and dashboard are still planned.
+Status: Phase 3 (tools served by the api: calendar, holds, Postgres, knowledge base). Call records and the dashboard are still planned.
 
 ## Big picture
 
@@ -41,7 +41,7 @@ flowchart LR
 | Path | What it is | Phase |
 | --- | --- | --- |
 | `apps/agent` | Pipecat pipeline: audio in -> VAD -> STT -> LLM -> TTS -> audio out. Each provider sits behind an interface picked by config. | 1-2, 5 |
-| `apps/api` | FastAPI. Owns all state: tenants, bookings, calls, messages. The agent calls it over HTTP for tools. | 3-4 |
+| `apps/api` | FastAPI. Owns all state: tenants, bookings, messages (calls in Phase 4). Serves the agent's tools over HTTP. | 3-4 |
 | `apps/web` | Next.js dashboard for business owners, and the browser test-call page. | 1, 7 |
 | `packages/shared` | Python code both agent and api import: `Settings` (env config) now; tenant config schemas and API models later. | 0+ |
 | `evals` | Simulated callers that run scenarios against the agent in text mode and score the result. | 6 |
@@ -78,8 +78,23 @@ flowchart LR
   script, then switches the TTS (Urdu -> Piper `ur_PK`, else Kokoro) before any text is spoken.
 - **Logging:** loguru everywhere (Pipecat uses it too), one JSON object per line, with `call_id` and
   `turn_id` at the top level (see `receptionist_shared.logging`).
-- **A booking (from Phase 3):** the LLM calls a tool, the agent calls the api, and the api locks the slot
-  in Redis, re-checks Google Calendar, writes the event with an idempotency key, and stores it in Postgres.
+- **A booking:** the LLM calls `check_availability`; the agent's `ApiBackend` asks the api, which
+  merges calendar busy times, confirmed bookings and other callers' holds, and returns at most three
+  options. At read-back (`create_booking`, `caller_confirmed=false`) the api takes a 2-minute Redis
+  hold on the slot. After the caller's yes, `POST /bookings` checks the hold, re-checks calendar + DB,
+  inserts the row (Postgres exclusion constraint = final guard), creates the Google event inside the
+  same transaction, commits, and releases the hold. See DECISIONS D14-D16.
+
+  ```text
+  agent tool --HTTP + X-Agent-Token--> api /v1/tenants/{slug}/...
+      availability : Calendar.busy + bookings table + Redis holds -> free_slots -> 3 options
+      holds        : Lua all-or-nothing SET NX on 15-min buckets (PX 120 s)
+      bookings     : idempotency key -> hold -> re-check -> INSERT (EXCLUDE gist) -> calendar event
+      messages     : messages table (kind = message | handoff)
+      knowledge    : tenant YAML facts, then markdown sections by embedding similarity
+  ```
+- **Database (Alembic, `make migrate`):** `tenants`, `bookings` (with the no-overlap exclusion
+  constraint), `messages`. Every row has `tenant_id`.
 
 ## Ports (local)
 
