@@ -31,6 +31,9 @@ agent: ## Run the voice agent; talk to it at http://localhost:7860/client
 chat: ## Text chat with the receptionist (real LLM + tools, stub bookings; ARGS="--tenant demo-workshop")
 	$(UV_RUN) python -m receptionist_agent.chat $(ARGS)
 
+bench: ## Latency benchmark: 20 utterances through the real pipeline per config -> docs/benchmarks/ (ARGS="--configs baseline")
+	$(UV_RUN) python -m receptionist_agent.bench.run $(ARGS)
+
 latency: ## P50/P95 per stage from logs/turns.jsonl (ARGS="--last 50")
 	$(UV_RUN) python -m receptionist_agent.latency_report $(ARGS)
 

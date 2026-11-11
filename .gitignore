@@ -19,6 +19,7 @@ node_modules/
 
 # runtime data
 logs/
+data/
 storage/
 models/
 

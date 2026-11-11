@@ -1,0 +1,40 @@
+# Benchmark caller scripts: 20 utterances in two calls, plus a barge-in check.
+#
+# Audio is synthesised from `text` (English: Kokoro am_michael, a different voice from the
+# agent's; Urdu: Piper ur_PK) into data/bench/synthetic/. Put a real recording at
+# data/bench/recorded/<id>.wav (16 kHz mono 16-bit) to replace any of them.
+# `kind` tags the turn for the report: faq (answer from the prompt),
+# tool (needs a tool call), simple (yes/no/thanks: the small-model route), bye.
+tenant: demo-salon
+calls:
+  - id: en
+    language: en
+    turns:
+      - {id: en01, kind: faq, text: "Hi. What time do you close on Saturday?"}
+      - {id: en02, kind: tool, text: "Is there parking near the salon?"}
+      - {id: en03, kind: faq, text: "How much is a haircut?"}
+      - {id: en04, kind: tool, text: "Okay. Can I book a haircut for next Saturday at eleven in the morning?"}
+      - {id: en05, kind: tool, text: "My name is Ali Khan, and my number is zero three zero zero, one two three, four five six seven."}
+      - {id: en06, kind: simple, text: "Yes, that's right."}
+      - {id: en07, kind: faq, text: "Do you accept JazzCash?"}
+      - {id: en08, kind: faq, text: "And what's your address?"}
+      - {id: en09, kind: simple, text: "Great, thank you."}
+      - {id: en10, kind: bye, text: "That's all. Bye."}
+  - id: ur
+    language: ur
+    turns:
+      - {id: ur01, kind: faq, text: "السلام علیکم۔ کیا آپ کا سیلون اتوار کو کھلا ہوتا ہے؟"}
+      - {id: ur02, kind: faq, text: "فیشل کتنے کا ہے؟"}
+      - {id: ur03, kind: tool, text: "مجھے اگلے اتوار شام پانچ بجے فیشل کروانا ہے۔"}
+      - {id: ur04, kind: tool, text: "میرا نام سارہ ہے، اور نمبر ہے صفر تین صفر صفر، ایک دو تین، چار پانچ چھ سات۔"}
+      - {id: ur05, kind: simple, text: "جی ہاں، ٹھیک ہے۔"}
+      - {id: ur06, kind: tool, text: "کیا آپ کے پاس پارکنگ ہے؟"}
+      - {id: ur07, kind: faq, text: "آپ کون سے پیسے لیتے ہیں؟ کیا جاز کیش چلتا ہے؟"}
+      - {id: ur08, kind: faq, text: "آپ کا پتہ کیا ہے؟"}
+      - {id: ur09, kind: simple, text: "بہت شکریہ۔"}
+      - {id: ur10, kind: bye, text: "بس اتنا ہی، خدا حافظ۔"}
+barge_in:
+  # The caller asks for something long, then talks over the agent once it has spoken for a bit.
+  prompt: {id: bi01, text: "Can you tell me all of your services and their prices, one by one?"}
+  interrupt: {id: bi02, text: "Sorry, sorry. Just the facial, please."}
+  after_agent_secs: 1.5
