@@ -61,6 +61,11 @@ _STOP = frozenset(
     ]
 )
 SEMANTIC_THRESHOLD = 0.5
+# Also return the runner-up when it scores within this margin of the best: neighbouring sections
+# (e.g. "colour aftercare" vs "patch test before colour") often both matter.
+RUNNER_UP_MARGIN = 0.08
+MAX_CHUNKS = 2
+MODEL_CACHE_DIR = Path.home() / ".cache" / "fastembed"  # fastembed defaults to /tmp
 KEYWORD_THRESHOLD = 2
 
 
@@ -126,12 +131,12 @@ class Embedder(Protocol):
 
 
 class FastEmbedder:
-    """fastembed's ONNX model. Loading downloads it once (~0.2 GB) to the HF cache."""
+    """fastembed's ONNX model. The first load downloads it (~0.2 GB) to ~/.cache/fastembed."""
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, cache_dir: Path = MODEL_CACHE_DIR) -> None:
         from fastembed import TextEmbedding
 
-        self._model: Any = TextEmbedding(model_name)
+        self._model: Any = TextEmbedding(model_name, cache_dir=str(cache_dir))
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [list(map(float, v)) for v in self._model.embed(texts)]
@@ -167,27 +172,34 @@ class KnowledgeBase:
                 logger.info("kb indexed", tenant=slug, chunks=len(chunks), semantic=self.semantic)
             return self._indexes[slug]
 
-    async def search(self, slug: str, question: str) -> Chunk | None:
+    async def search(self, slug: str, question: str) -> list[Chunk]:
+        """Best matching sections (at most MAX_CHUNKS); empty if nothing is relevant enough."""
         index = await self._index(slug)
         if not index.chunks:
-            return None
+            return []
         if self._embedder is not None and index.vectors:
             (qv,) = await asyncio.to_thread(self._embedder.embed, [question])
-            best = max(
+            ranked = sorted(
                 zip((_cosine(qv, v) for v in index.vectors), index.chunks, strict=True),
-                key=lambda x: x[0],
+                key=lambda x: -x[0],
             )
-            return best[1] if best[0] >= SEMANTIC_THRESHOLD else None
+            best = ranked[0][0]
+            if best < SEMANTIC_THRESHOLD:
+                return []
+            return [c for score, c in ranked[:MAX_CHUNKS] if score >= best - RUNNER_UP_MARGIN]
         score, chunk = keyword_rank(question, index.chunks)[0]
-        return chunk if score >= KEYWORD_THRESHOLD else None
+        return [chunk] if score >= KEYWORD_THRESHOLD else []
 
     async def lookup(self, tenant: TenantConfig, question: str, language: str) -> KnowledgeResult:
         config = lookup(tenant, question, language=language)
-        chunk = await self.search(tenant.slug, question)
-        if chunk is None:
+        chunks = await self.search(tenant.slug, question)
+        if not chunks:
             return config
-        answer = f"{config.answer} {chunk.text}".strip() if config.found else chunk.text
-        return KnowledgeResult(found=True, answer=answer, sources=[*config.sources, chunk.source])
+        kb_text = " ".join(c.text for c in chunks)
+        answer = f"{config.answer} {kb_text}".strip() if config.found else kb_text
+        return KnowledgeResult(
+            found=True, answer=answer, sources=[*config.sources, *(c.source for c in chunks)]
+        )
 
 
 def make_embedder(enabled: bool, model_name: str) -> Embedder | None:

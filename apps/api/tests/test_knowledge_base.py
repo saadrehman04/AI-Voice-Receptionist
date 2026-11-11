@@ -41,9 +41,9 @@ class FakeEmbedder:
 
 async def test_semantic_path_and_threshold(salon: TenantConfig) -> None:
     kb = KnowledgeBase(KB, FakeEmbedder())
-    hit = await kb.search("demo-salon", "when can I wash after colour")
-    assert hit is not None and "Colour aftercare" in hit.source
-    assert await kb.search("demo-salon", "do you sell gift vouchers") is None
+    hits = await kb.search("demo-salon", "when can I wash after colour")
+    assert hits and "Colour aftercare" in hits[0].source
+    assert await kb.search("demo-salon", "do you sell gift vouchers") == []
 
 
 async def test_config_facts_come_first(salon: TenantConfig) -> None:
