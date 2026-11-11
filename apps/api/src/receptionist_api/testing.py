@@ -16,10 +16,12 @@ import os
 from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import asyncpg  # type: ignore[import-untyped]
 import httpx
 import pytest
+import yaml
 from redis.asyncio import Redis
 from sqlalchemy.engine import make_url
 
@@ -167,3 +169,32 @@ async def api(resources: Resources) -> AsyncIterator[httpx.AsyncClient]:
         transport=transport, base_url="http://api", headers={"X-Agent-Token": TOKEN}
     ) as client:
         yield client
+
+
+# ---------------------------------------------------------------- owner helpers
+
+PASSWORD = "a-long-enough-password"  # noqa: S105 - test-only value
+
+
+def tenant_payload(slug: str, name: str) -> dict[str, Any]:
+    data = yaml.safe_load((REPO / "tenants/demo-salon.yaml").read_text(encoding="utf-8"))
+    data.update(slug=slug, business_name=name)
+    return dict(data)
+
+
+async def onboard(api: httpx.AsyncClient, slug: str, email: str) -> str:
+    r = await api.post(
+        "/v1/onboarding",
+        json={
+            "tenant": tenant_payload(slug, slug.title()),
+            "owner_email": email,
+            "password": PASSWORD,
+        },
+    )
+    if r.status_code != 201:
+        raise AssertionError(r.text)
+    return str(r.json()["access_token"])
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

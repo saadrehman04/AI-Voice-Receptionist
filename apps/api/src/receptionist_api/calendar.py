@@ -135,6 +135,11 @@ class ServiceAccountTokens:
         )
         self._lock = asyncio.Lock()
 
+    @property
+    def email(self) -> str:
+        """The address a business shares its calendar with."""
+        return str(self._credentials.service_account_email)
+
     async def token(self) -> str:
         async with self._lock:
             if not self._credentials.valid:

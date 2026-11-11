@@ -248,6 +248,27 @@ class CallRecords:
         by_outcome = {outcome or "pending": n for outcome, n in rows}
         return {"total": sum(by_outcome.values()), "by_outcome": by_outcome}
 
+    async def call_times(
+        self, tenant_id: uuid.UUID, *, since: datetime
+    ) -> list[tuple[datetime, str | None]]:
+        """(started_at, outcome) of every call since `since`, oldest first (analytics)."""
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(Call.started_at, Call.outcome)
+                    .where(Call.tenant_id == tenant_id, Call.started_at >= since)
+                    .order_by(Call.started_at)
+                )
+            ).all()
+        return [(started, outcome) for started, outcome in rows]
+
+    async def recording_path(self, tenant_id: uuid.UUID, call_pk: uuid.UUID) -> str | None:
+        async with self._sessions() as session:
+            path = await session.scalar(
+                select(Call.recording_path).where(Call.id == call_pk, Call.tenant_id == tenant_id)
+            )
+        return path
+
 
 def since_days(now: datetime, days: int) -> datetime:
     return now - timedelta(days=days)

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from fastapi import FastAPI
 from loguru import logger
 from pydantic import BaseModel
@@ -30,8 +31,16 @@ from receptionist_api.db.session import make_engine, make_sessionmaker
 from receptionist_api.holds import SlotHolds
 from receptionist_api.jobs import JobQueue
 from receptionist_api.knowledge_base import KnowledgeBase, make_embedder
-from receptionist_api.routes import agent_tools, owners
+from receptionist_api.ratelimit import RateLimiter
+from receptionist_api.routes import agent_tools, owners, setup
 from receptionist_api.tenants import TenantRegistry, TenantStore
+from receptionist_api.website_draft import (
+    Drafter,
+    LlmDrafter,
+    LlmEndpoint,
+    gemini_endpoint,
+    groq_endpoint,
+)
 from receptionist_shared import Settings, get_settings
 from receptionist_shared.logging import configure_logging
 from receptionist_shared.tenant import list_tenants
@@ -54,6 +63,13 @@ class Resources:
     agent_token: str | None
     jwt_secret: str | None
     closers: list[Callable[[], Awaitable[object]]] = field(default_factory=list)
+    # Phase 7 (onboarding and the dashboard); tests set what they exercise.
+    calendar: Calendar = field(default_factory=FakeCalendar)
+    calendar_account: str | None = None  # the service account a business shares with
+    drafter: Drafter | None = None  # None = drafting from a website is switched off
+    draft_limiter: RateLimiter | None = None
+    web_client: httpx.AsyncClient | None = None  # fetches owners' websites
+    storage_dir: Path = Path("storage")
 
     async def close(self) -> None:
         for close in reversed(self.closers):
@@ -63,21 +79,42 @@ class Resources:
                 logger.warning("error during shutdown", error=str(exc))
 
 
-def make_calendar(settings: Settings) -> tuple[Calendar, list[Callable[[], Awaitable[object]]]]:
+Closers = list[Callable[[], Awaitable[object]]]
+
+
+def make_calendar(settings: Settings) -> tuple[Calendar, str | None, Closers]:
+    """The calendar, the account businesses share their calendar with, and its closers."""
     if settings.calendar_provider == "google":
         if not settings.google_service_account_file:
             raise RuntimeError("CALENDAR_PROVIDER=google needs GOOGLE_SERVICE_ACCOUNT_FILE")
         tokens = ServiceAccountTokens(Path(settings.google_service_account_file))
         google = GoogleCalendar(tokens.token)
-        return google, [google.aclose]
-    return FakeCalendar(), []
+        return google, tokens.email, [google.aclose]
+    return FakeCalendar(), None, []
+
+
+def draft_endpoints(settings: Settings) -> list[LlmEndpoint]:
+    """Groq first, Gemini as the backup; empty when neither key is set."""
+    out: list[LlmEndpoint] = []
+    if settings.groq_api_key:
+        out.append(
+            groq_endpoint(
+                settings.groq_api_key.get_secret_value(),
+                settings.groq_llm_model,
+                settings.groq_reasoning_effort,
+            )
+        )
+    if settings.gemini_api_key:
+        key = settings.gemini_api_key.get_secret_value()
+        out.append(gemini_endpoint(key, settings.gemini_model))
+    return out
 
 
 async def build_resources(settings: Settings) -> Resources:
     engine = make_engine(settings.database_url)
     sessions = make_sessionmaker(engine)
     redis = Redis.from_url(settings.redis_url)
-    calendar, closers = make_calendar(settings)
+    calendar, calendar_account, closers = make_calendar(settings)
     bookings = BookingService(
         sessions,
         SlotHolds(redis, hold_secs=settings.hold_secs),
@@ -103,6 +140,11 @@ async def build_resources(settings: Settings) -> Resources:
         calendar=settings.calendar_provider,
         semantic_kb=embedder is not None,
     )
+    web_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        headers={"User-Agent": "VoiceReceptionistOnboarding/0.1"},
+    )
+    endpoints = draft_endpoints(settings)
     return Resources(
         tenants=tenants,
         store=store,
@@ -112,7 +154,13 @@ async def build_resources(settings: Settings) -> Resources:
         kb=KnowledgeBase(Path(settings.kb_dir), embedder),
         agent_token=token,
         jwt_secret=jwt_secret,
-        closers=[*closers, redis.aclose, engine.dispose],
+        closers=[*closers, web_client.aclose, redis.aclose, engine.dispose],
+        calendar=calendar,
+        calendar_account=calendar_account,
+        drafter=LlmDrafter(endpoints, web_client) if endpoints else None,
+        draft_limiter=RateLimiter(redis, prefix="draft", limit=20, window_secs=3600),
+        web_client=web_client,
+        storage_dir=Path(settings.storage_dir),
     )
 
 
@@ -144,6 +192,8 @@ def create_app(resources: Resources | None = None) -> FastAPI:
     app.include_router(agent_tools.router)
     app.include_router(owners.auth_router)
     app.include_router(owners.dashboard)
+    app.include_router(setup.onboarding)
+    app.include_router(setup.calendar)
     return app
 
 

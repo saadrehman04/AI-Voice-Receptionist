@@ -6,40 +6,13 @@ change anything of business B's, through any route.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import httpx
 import pytest
-import yaml
 
 from receptionist_api.jobs import JobQueue
 from receptionist_api.main import Resources
-from receptionist_api.testing import REPO
-
-PASSWORD = "a-long-enough-password"
-
-
-def tenant_payload(slug: str, name: str) -> dict[str, Any]:
-    data = yaml.safe_load((REPO / "tenants/demo-salon.yaml").read_text(encoding="utf-8"))
-    data.update(slug=slug, business_name=name)
-    return dict(data)
-
-
-async def onboard(api: httpx.AsyncClient, slug: str, email: str) -> str:
-    r = await api.post(
-        "/v1/onboarding",
-        json={
-            "tenant": tenant_payload(slug, slug.title()),
-            "owner_email": email,
-            "password": PASSWORD,
-        },
-    )
-    assert r.status_code == 201, r.text
-    return str(r.json()["access_token"])
-
-
-def bearer(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+from receptionist_api.testing import PASSWORD, bearer, onboard, tenant_payload
 
 
 async def make_call(api: httpx.AsyncClient, slug: str, call_id: str) -> None:

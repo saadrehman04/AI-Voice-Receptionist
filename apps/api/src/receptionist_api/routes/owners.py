@@ -7,11 +7,14 @@ tenant's call by id simply finds nothing (404).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from receptionist_api.auth import Owner, OwnerDep, create_token, verify_password
@@ -176,11 +179,42 @@ class StageStats(BaseModel):
     p95: float | None
 
 
+class DayStats(BaseModel):
+    day: date
+    calls: int
+    booked: int
+
+
 class Stats(BaseModel):
     days: int
     calls: int
     by_outcome: dict[str, int]
     latency_ms: dict[str, StageStats]
+    per_day: list[DayStats]  # in the business's time zone, oldest first, no gaps
+    booking_rate: float | None  # booked / ended calls (None with no ended calls)
+    after_hours: int  # calls answered while the business was closed ("missed calls saved")
+
+
+def _is_open(tenant: TenantConfig, at: datetime) -> bool:
+    local = at.astimezone(tenant.tz)
+    return any(r.start <= local.time() < r.end for r in tenant.hours_on(local.date()))
+
+
+def day_stats(
+    tenant: TenantConfig, times: list[tuple[datetime, str | None]], *, now: datetime, days: int
+) -> tuple[list[DayStats], int]:
+    """Calls and bookings per local day over the last `days` days, and calls while closed."""
+    today = now.astimezone(tenant.tz).date()
+    first = today - timedelta(days=days - 1)
+    counts = {first + timedelta(days=i): [0, 0] for i in range(days)}
+    after_hours = 0
+    for started, outcome in times:
+        day = started.astimezone(tenant.tz).date()
+        if day in counts:
+            counts[day][0] += 1
+            counts[day][1] += outcome == "booked"
+        after_hours += not _is_open(tenant, started)
+    return [DayStats(day=d, calls=c, booked=b) for d, (c, b) in counts.items()], after_hours
 
 
 def _call_item(c: Call) -> CallItem:
@@ -289,6 +323,31 @@ async def call_detail(call_pk: uuid.UUID, owner: OwnerDep, calls: CallsDep) -> C
     )
 
 
+@dashboard.get("/calls/{call_pk}/recording", response_class=FileResponse)
+async def call_recording(
+    call_pk: uuid.UUID, owner: OwnerDep, calls: CallsDep, request: Request
+) -> FileResponse:
+    """The call's stereo WAV (caller left, agent right), if recording was on.
+
+    Served only from `<storage_dir>/<this tenant>/`: a stored path that points anywhere else
+    is treated as missing, so a bad row can never expose another tenant's (or any) file.
+    """
+    stored = await calls.recording_path(owner.tenant_id, call_pk)
+    storage_dir: Path = request.app.state.resources.storage_dir
+    path = await asyncio.to_thread(_tenant_file, storage_dir / owner.tenant_slug, stored)
+    if path is None:
+        raise _error(404, "recording_not_found", str(call_pk))
+    return FileResponse(path, media_type="audio/wav", filename=f"{path.stem}.wav")
+
+
+def _tenant_file(root: Path, stored: str | None) -> Path | None:
+    """`stored` as a real file inside `root`, else None (symlinks and `..` resolved first)."""
+    if not stored:
+        return None
+    path = Path(stored).resolve()
+    return path if path.is_relative_to(root.resolve()) and path.is_file() else None
+
+
 @dashboard.get("/bookings", response_model=list[BookingItem])
 async def list_bookings(
     owner: OwnerDep, calls: CallsDep, upcoming: bool = True
@@ -317,16 +376,33 @@ async def update_message(
 
 @dashboard.get("/stats", response_model=Stats)
 async def stats(
-    owner: OwnerDep, calls: CallsDep, days: Annotated[int, Query(ge=1, le=90)] = 7
+    owner: OwnerDep,
+    calls: CallsDep,
+    store: StoreDep,
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
 ) -> Stats:
-    since = since_days(datetime.now(UTC), days)
+    now = datetime.now(UTC)
+    tenant = store.registry.get(owner.tenant_slug)
+    if tenant is None:
+        raise _error(404, "tenant_not_found", owner.tenant_slug)
+    # Whole local days: "last 7 days" starts at midnight six days ago, business time.
+    start_day = now.astimezone(tenant.tz).date() - timedelta(days=days - 1)
+    since = min(since_days(now, days), datetime.combine(start_day, datetime.min.time(), tenant.tz))
     counts = await calls.counts(owner.tenant_id, since=since)
     latency = await calls.latency_stats(owner.tenant_id, since=since)
+    per_day, after_hours = day_stats(
+        tenant, await calls.call_times(owner.tenant_id, since=since), now=now, days=days
+    )
+    by_outcome: dict[str, int] = counts["by_outcome"]
+    ended = sum(n for k, n in by_outcome.items() if k != "pending")
     return Stats(
         days=days,
         calls=counts["total"],
-        by_outcome=counts["by_outcome"],
+        by_outcome=by_outcome,
         latency_ms={k: StageStats(**v) for k, v in latency.items()},
+        per_day=per_day,
+        booking_rate=round(by_outcome.get("booked", 0) / ended, 3) if ended else None,
+        after_hours=after_hours,
     )
 
 
