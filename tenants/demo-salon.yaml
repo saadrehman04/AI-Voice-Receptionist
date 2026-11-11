@@ -1,0 +1,81 @@
+# Example tenant: a bilingual hair & beauty salon. All facts here are invented test data.
+slug: demo-salon
+business_name: Noor Beauty Salon
+business_name_ur: نور بیوٹی سیلون
+business_type: hair and beauty salon
+languages: [en, ur]
+default_language: en
+timezone: Asia/Karachi
+currency: PKR
+address: 12-B Main Boulevard, Gulberg III, Lahore
+
+opening_hours:
+  monday: ["11:00-20:00"]
+  tuesday: closed
+  wednesday: ["11:00-20:00"]
+  thursday: ["11:00-20:00"]
+  friday: ["11:00-13:00", "15:00-20:00"]
+  saturday: ["10:00-21:00"]
+  sunday: ["10:00-21:00"]
+
+services:
+  - name: Haircut
+    name_ur: ہیئر کٹ
+    duration_min: 45
+    price: 2500
+    staff: [Ayesha, Sana]
+  - name: Blow dry
+    name_ur: بلو ڈرائی
+    duration_min: 30
+    price: 1500
+    staff: [Ayesha, Sana, Hira]
+  - name: Hair colour
+    name_ur: ہیئر کلر
+    duration_min: 120
+    price: 8000
+    price_note: from; final price depends on hair length
+    staff: [Sana]
+  - name: Facial
+    name_ur: فیشل
+    duration_min: 60
+    price: 3500
+    staff: [Hira]
+  - name: Bridal makeup
+    name_ur: برائیڈل میک اپ
+    duration_min: 180
+    price: null   # price on request: the agent must not quote one
+    staff: [Ayesha]
+
+policies:
+  cancellation: Please cancel at least 4 hours before your appointment. Late cancellations may be charged half the price.
+  late_arrival: If you are more than 15 minutes late we may need to shorten or reschedule your appointment.
+  payment: Cash, debit card and JazzCash are accepted.
+
+greeting:
+  en: Hello, thank you for calling Noor Beauty Salon. How can I help you today?
+  ur: السلام علیکم، نور بیوٹی سیلون میں فون کرنے کا شکریہ۔ میں آپ کی کیا مدد کر سکتی ہوں؟
+
+handoff:
+  name: Ayesha (salon manager)
+  phone: "+92 300 1234567"
+
+faq:
+  - question: Is there parking?
+    answer: Yes, there is free parking in front of the salon and on the side street.
+    answer_ur: جی ہاں، سیلون کے سامنے اور ساتھ والی گلی میں مفت پارکنگ موجود ہے۔
+    keywords: [parking, car, park, پارکنگ, گاڑی]
+  - question: Do you take walk-ins?
+    answer: Walk-ins are welcome when a stylist is free, but booking ahead is recommended on weekends.
+    answer_ur: اگر اسٹائلسٹ فارغ ہو تو بغیر اپائنٹمنٹ آ سکتے ہیں، لیکن ویک اینڈ پر پہلے سے بکنگ بہتر ہے۔
+    keywords: [walk-in, walk in, without appointment, بغیر اپائنٹمنٹ]
+  - question: Do you serve men?
+    answer: No, Noor Beauty Salon is a ladies-only salon.
+    answer_ur: نہیں، نور بیوٹی سیلون صرف خواتین کے لیے ہے۔
+    keywords: [men, male, gents, ladies only, مرد, جینٹس]
+  - question: Which products do you use?
+    answer: We use L'Oreal Professional and Wella products for hair colour and treatments.
+    keywords: [products, brand, loreal, wella, پروڈکٹس]
+
+booking_buffer_min: 15
+min_notice_min: 60
+max_days_ahead: 30

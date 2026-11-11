@@ -52,8 +52,14 @@ class Settings(BaseSettings):
     faster_whisper_model: str = "small"
     kokoro_voice: str = "af_heart"
     piper_voice: str = "en_US-lessac-medium"
+    # Urdu replies are spoken by Piper (Kokoro has no Urdu); see DECISIONS D10.
+    piper_urdu_voice: str = "ur_PK-fasih-medium"
     # ISO code like "en" or "ur"; unset = let Whisper auto-detect per utterance.
     stt_language: str | None = None
+
+    # --- tenants ---
+    tenants_dir: str = "tenants"
+    default_tenant: str = "demo-salon"
 
     # --- observability ---
     log_json: bool = True

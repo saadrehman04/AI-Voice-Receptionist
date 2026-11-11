@@ -1,0 +1,78 @@
+# Example tenant: an auto workshop. All facts here are invented test data.
+slug: demo-workshop
+business_name: Karachi Auto Care
+business_name_ur: کراچی آٹو کیئر
+business_type: car service and repair workshop
+languages: [ur, en]
+default_language: ur
+timezone: Asia/Karachi
+currency: PKR
+address: Plot 45, Shahrah-e-Faisal service road, Karachi
+
+opening_hours:
+  monday: ["09:00-18:00"]
+  tuesday: ["09:00-18:00"]
+  wednesday: ["09:00-18:00"]
+  thursday: ["09:00-18:00"]
+  friday: ["09:00-12:30", "14:30-18:00"]
+  saturday: ["09:00-15:00"]
+  sunday: closed
+
+services:
+  - name: Oil change
+    name_ur: آئل چینج
+    duration_min: 30
+    price: 6500
+    price_note: includes synthetic oil and filter for most sedans
+  - name: General service
+    name_ur: جنرل سروس
+    duration_min: 120
+    price: 15000
+  - name: AC gas refill
+    name_ur: اے سی گیس ریفل
+    duration_min: 60
+    price: 7000
+  - name: Brake inspection
+    name_ur: بریک چیک اپ
+    duration_min: 45
+    price: 2000
+  - name: Engine diagnostics
+    name_ur: انجن ڈائیگناسٹک
+    duration_min: 60
+    price: null   # quoted after inspection
+
+policies:
+  cancellation: Please call at least 2 hours before to cancel or move your slot.
+  late_arrival: Slots are held for 20 minutes; after that the car may have to wait for the next free bay.
+  payment: Cash and bank transfer only.
+  other:
+    - Parts not in stock are ordered and quoted separately before any work starts.
+
+greeting:
+  en: Hello, you have reached Karachi Auto Care. How can I help you?
+  ur: السلام علیکم، کراچی آٹو کیئر۔ میں آپ کی کیا مدد کر سکتا ہوں؟
+
+handoff:
+  name: Imran (workshop supervisor)
+  phone: "+92 321 7654321"
+
+faq:
+  - question: Do you offer pick and drop?
+    answer: Yes, pick and drop is available within 10 kilometres for a flat 1000 rupees.
+    answer_ur: جی ہاں، دس کلومیٹر کے اندر پک اینڈ ڈراپ ایک ہزار روپے میں دستیاب ہے۔
+    keywords: [pick, drop, pickup, collect, پک, ڈراپ]
+  - question: How long does a general service take?
+    answer: Around two hours if no extra parts are needed.
+    answer_ur: اگر اضافی پارٹس کی ضرورت نہ ہو تو تقریباً دو گھنٹے۔
+    keywords: [how long, time, duration, کتنا وقت, کتنی دیر]
+  - question: Do you work on hybrid cars?
+    answer: Yes, we service Toyota and Honda hybrids, including hybrid battery checks.
+    keywords: [hybrid, ہائبرڈ, battery]
+  - question: Is there a warranty on repairs?
+    answer: Labour is guaranteed for 30 days. Parts carry the manufacturer's warranty.
+    answer_ur: لیبر پر تیس دن کی گارنٹی ہے، اور پارٹس پر کمپنی کی وارنٹی ہوتی ہے۔
+    keywords: [warranty, guarantee, وارنٹی, گارنٹی]
+
+booking_buffer_min: 0
+min_notice_min: 120
+max_days_ahead: 21
