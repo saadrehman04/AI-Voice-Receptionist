@@ -32,6 +32,7 @@ Gemini's OpenAI-compatible endpoint needs two repairs (`gemini_compat=True`), bo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -201,9 +202,52 @@ def is_simple_turn(body: Mapping[str, Any]) -> bool:
 
 @dataclass
 class _Budget:
+    """What we know about one target's rate limits.
+
+    Groq's per-minute token bucket refills continuously; its headers give what is left and
+    how long a full refill takes, so the refill rate follows. A 429 (e.g. the 200k tokens/day
+    limit) sets `ready_at` from `retry-after`.
+    """
+
     ready_at: float = 0.0  # monotonic time before which we skip this target
-    remaining_tokens: int | None = None
-    tokens_reset_at: float = 0.0
+    remaining_tokens: float | None = None
+    limit_tokens: float | None = None  # None: provider didn't say; assume no refill until reset
+    noted_at: float = 0.0
+    full_at: float = 0.0  # when the bucket is full again
+    refill_per_sec: float = 0.0
+
+    def available(self, now: float) -> float | None:
+        """Tokens we can spend now (None = unknown, so assume enough)."""
+        if self.remaining_tokens is None or now >= self.full_at:
+            return None
+        if self.limit_tokens is None:
+            return self.remaining_tokens
+        refilled = self.remaining_tokens + (now - self.noted_at) * self.refill_per_sec
+        return min(self.limit_tokens, refilled)
+
+    def enough_at(self, tokens: int) -> float:
+        """When this target can take a request of `tokens` (now or later)."""
+        if self.remaining_tokens is None or self.remaining_tokens >= tokens:
+            return self.ready_at
+        if self.limit_tokens is None or self.refill_per_sec <= 0:
+            return max(self.ready_at, self.full_at)
+        when = self.noted_at + (tokens - self.remaining_tokens) / self.refill_per_sec
+        return max(self.ready_at, min(when, self.full_at))
+
+
+class BudgetBook:
+    """Rate-limit state per (target, API key). Limits are per account, not per call, so every
+    call in the process shares one book (`SHARED_BUDGETS`) and learns from the others."""
+
+    def __init__(self) -> None:
+        self._budgets: dict[tuple[str, str], _Budget] = {}
+
+    def __getitem__(self, target: LlmTarget) -> _Budget:
+        key_id = hashlib.sha256(target.api_key.encode()).hexdigest()[:12]  # never the key itself
+        return self._budgets.setdefault((target.name, key_id), _Budget())
+
+
+SHARED_BUDGETS = BudgetBook()
 
 
 class FallbackTransport(httpx2.AsyncBaseTransport):
@@ -215,6 +259,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         clock: Callable[[], float] = time.monotonic,
         on_served: Callable[[LlmTarget, int], None] | None = None,
         simple_target: str | None = None,
+        budgets: BudgetBook | None = None,  # default: shared by every call in the process
     ) -> None:
         if not targets:
             raise ValueError("FallbackTransport needs at least one target")
@@ -224,21 +269,24 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         self.simple_target = simple_target  # tried first for yes/no/thanks turns
         self._inner = inner or httpx2.AsyncHTTPTransport()
         self._clock = clock
-        self._budgets = {t.name: _Budget() for t in self.targets}
+        self._budgets = budgets if budgets is not None else SHARED_BUDGETS
         self.on_served = on_served  # (target, status) for each answered request
+        self.estimated_tokens = 0  # prompt tokens sent in answered requests (chars / 4)
 
     # ------------------------------------------------------------ ordering
 
     def _estimate_tokens(self, body: Mapping[str, Any]) -> int:
-        size = len(json.dumps(body.get("messages", []))) + len(json.dumps(body.get("tools", [])))
-        return size // CHARS_PER_TOKEN
+        # ensure_ascii=False: escaped Urdu ("\\u06a9") would count six times its real length.
+        text = json.dumps(body.get("messages", []), ensure_ascii=False)
+        text += json.dumps(body.get("tools", []), ensure_ascii=False)
+        return len(text) // CHARS_PER_TOKEN
 
     def _usable_now(self, target: LlmTarget, tokens: int, now: float) -> bool:
-        b = self._budgets[target.name]
+        b = self._budgets[target]
         if now < b.ready_at:
             return False
-        budget_known = b.remaining_tokens is not None and now < b.tokens_reset_at
-        return not (budget_known and (b.remaining_tokens or 0) < tokens)
+        available = b.available(now)
+        return available is None or available >= tokens
 
     def order(self, body: Mapping[str, Any]) -> list[LlmTarget]:
         """Targets to try: usable ones in configured order, then the rest by soonest ready."""
@@ -248,8 +296,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
             ready.sort(key=lambda t: t.name != self.simple_target)  # stable: rest keep order
 
         def ready_at(t: LlmTarget) -> float:
-            b = self._budgets[t.name]
-            return max(b.ready_at, b.tokens_reset_at)
+            return self._budgets[t].enough_at(tokens)
 
         return ready + sorted((t for t in self.targets if t not in ready), key=ready_at)
 
@@ -258,13 +305,20 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
     def _note_headers(self, target: LlmTarget, response: httpx2.Response) -> None:
         remaining = response.headers.get("x-ratelimit-remaining-tokens")
         reset = parse_duration(response.headers.get("x-ratelimit-reset-tokens"))
-        if remaining is not None and remaining.isdigit() and reset is not None:
-            b = self._budgets[target.name]
-            b.remaining_tokens = int(remaining)
-            b.tokens_reset_at = self._clock() + reset
+        if remaining is None or not remaining.isdigit() or reset is None:
+            return
+        b = self._budgets[target]
+        limit = response.headers.get("x-ratelimit-limit-tokens")
+        b.limit_tokens = float(limit) if limit and limit.isdigit() else None
+        b.remaining_tokens = float(remaining)
+        b.noted_at = self._clock()
+        b.full_at = b.noted_at + reset
+        missing = (b.limit_tokens or b.remaining_tokens) - b.remaining_tokens
+        # A full refill takes `reset` seconds, so tokens come back at missing / reset per second.
+        b.refill_per_sec = missing / reset if reset > 0 else 0.0
 
     def _cool(self, target: LlmTarget, secs: float) -> None:
-        self._budgets[target.name].ready_at = self._clock() + secs
+        self._budgets[target].ready_at = self._clock() + secs
 
     # ------------------------------------------------------------ requests
 
@@ -331,6 +385,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
                 target is not self.targets[0] and target.name != self.simple_target
             ):
                 logger.info("llm served by fallback", target=target.name, tried=tried)
+            self.estimated_tokens += self._estimate_tokens(body)
             if self.on_served is not None:
                 self.on_served(target, response.status_code)
             if target.gemini_compat and isinstance(response.stream, httpx2.AsyncByteStream):
@@ -361,6 +416,8 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
 __all__ = [
     "GEMINI_CHAT_URL",
     "GROQ_CHAT_URL",
+    "SHARED_BUDGETS",
+    "BudgetBook",
     "FallbackTransport",
     "GeminiStreamFix",
     "LlmTarget",

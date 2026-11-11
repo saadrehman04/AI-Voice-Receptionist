@@ -124,6 +124,7 @@ class ReplayTransport(BaseTransport):
             audio_out_enabled=True,
             audio_in_sample_rate=in_rate,
             audio_out_sample_rate=out_rate,
+            audio_out_end_silence_secs=0,  # Pipecat pads a hang-up with 2 s of silence; not speech
         )
         self._input = ReplayInput(params)
         self._output = ReplayOutput(params)

@@ -11,6 +11,10 @@
 - **Pre-warm** (`PREWARM_CONNECTIONS`): open the LLM and STT HTTPS connections when the call
   starts, so the first turn doesn't pay for DNS + TLS.
 - **VAD stop** (`VAD_STOP_SECS`): how much silence ends the caller's speech.
+- **Number pauses** (`VAD_NUMBER_STOP_SECS`): after the agent asks for a phone number, the next
+  caller turn needs this much silence to end, because people pause between digit groups
+  ("zero three zero zero ... one two three"). Found by the benchmark: at 0.2 s the turn ended
+  after the first group and the agent answered half a number.
 
 Simple-turn routing to a smaller model lives in `llm_fallback` (it is a choice of target).
 """
@@ -18,11 +22,13 @@ Simple-turn routing to a smaller model lives in `llm_fallback` (it is a choice o
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from loguru import logger
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
     FunctionCallsStartedFrame,
@@ -32,6 +38,7 @@ from pipecat.frames.frames import (
     LLMTextFrame,
     TTSSpeakFrame,
     UserStoppedSpeakingFrame,
+    VADParamsUpdateFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.tts_service import TTSService
@@ -53,6 +60,7 @@ class LatencyFlags:
     filler_after_ms: int = 400  # 0 = no fillers
     prewarm: bool = True
     vad_stop_secs: float = 0.2
+    vad_number_stop_secs: float = 0.8  # 0 = same as vad_stop_secs
 
     @classmethod
     def from_settings(cls, settings: Settings) -> LatencyFlags:
@@ -61,6 +69,7 @@ class LatencyFlags:
             filler_after_ms=settings.filler_after_ms,
             prewarm=settings.prewarm_connections,
             vad_stop_secs=settings.vad_stop_secs,
+            vad_number_stop_secs=settings.vad_number_stop_secs,
         )
 
 
@@ -188,6 +197,47 @@ class ToolFiller(FrameProcessor):
     async def cleanup(self) -> None:
         await self._cancel_timer()
         await super().cleanup()  # type: ignore[no-untyped-call]
+
+
+# ---------------------------------------------------------------- number pauses
+
+ASKS_FOR_NUMBER = re.compile(r"\b(phone|number|digits|mobile)\b|نمبر|فون|موبائل", re.IGNORECASE)
+
+
+class NumberPauseTuner(FrameProcessor):
+    """After a reply that asks for a phone number, let the caller pause longer between digits.
+
+    Sits after the LLM and sends `VADParamsUpdateFrame` upstream, to the user aggregator that
+    owns the VAD; the normal setting comes back once that caller turn has ended.
+    """
+
+    def __init__(self, *, normal_secs: float, number_secs: float) -> None:
+        super().__init__()
+        self._normal = VADParams(stop_secs=normal_secs)
+        self._number = VADParams(stop_secs=number_secs)
+        self._reply: list[str] = []
+        self._raised = False
+
+    async def _set(self, params: VADParams) -> None:
+        await self.push_frame(VADParamsUpdateFrame(params=params), FrameDirection.UPSTREAM)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, LLMFullResponseStartFrame):
+                self._reply = []
+            elif isinstance(frame, LLMTextFrame):
+                self._reply.append(frame.text)
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                text = "".join(self._reply)
+                is_question = "?" in text or "؟" in text
+                if is_question and ASKS_FOR_NUMBER.search(text) and not self._raised:
+                    self._raised = True
+                    await self._set(self._number)
+            elif isinstance(frame, UserStoppedSpeakingFrame) and self._raised:
+                self._raised = False
+                await self._set(self._normal)
+        await self.push_frame(frame, direction)
 
 
 # ---------------------------------------------------------------- pre-warm

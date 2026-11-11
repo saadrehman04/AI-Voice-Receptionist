@@ -32,6 +32,7 @@ from receptionist_agent.brain.backend import (
 )
 from receptionist_agent.brain.state import CallState, Intent, StateError
 from receptionist_agent.language import caller_language
+from receptionist_agent.tracing import tool_span
 from receptionist_shared.availability import spoken_slot
 from receptionist_shared.phone import normalize_pk_phone, spoken_digits
 from receptionist_shared.tenant import Service, TenantConfig
@@ -501,7 +502,9 @@ class ReceptionistTools:
         found = await self.backend.lookup(
             self.tenant, question, language=self.state.language or "en"
         )
-        return found.as_tool_result()
+        # "ok" = the lookup ran (found or not). Without it, call records and traces marked
+        # every lookup as a failed tool call.
+        return {"ok": True, **found.as_tool_result()}
 
     async def take_message(self, args: Mapping[str, Any]) -> ToolResult:
         message = _str(args, "message")
@@ -562,14 +565,17 @@ class ReceptionistTools:
         if handler is None:
             return _err(f"unknown tool {name!r}")
         started = time_module.perf_counter()
-        try:
-            result = await handler(args)
-        except Exception as exc:  # a tool bug or a down api must not kill the call
-            logger.exception("tool failed", tool=name)
-            result = _err(
-                f"{type(exc).__name__}: the system had a problem; offer to take a message"
-            )
-        duration_ms = int((time_module.perf_counter() - started) * 1000)
+        with tool_span(name, self.call_id) as span:
+            try:
+                result = await handler(args)
+            except Exception as exc:  # a tool bug or a down api must not kill the call
+                logger.exception("tool failed", tool=name)
+                result = _err(
+                    f"{type(exc).__name__}: the system had a problem; offer to take a message"
+                )
+            duration_ms = int((time_module.perf_counter() - started) * 1000)
+            span.set_attribute("tool.ok", bool(result.get("ok")))
+            span.set_attribute("tool.duration_ms", duration_ms)
         if self._on_tool_call is not None:
             self._on_tool_call(name, dict(args), result, bool(result.get("ok")), duration_ms)
         # Log the outcome without caller name or phone number (no PII in logs).

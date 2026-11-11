@@ -153,7 +153,9 @@ def test_describe_providers_never_includes_secrets() -> None:
     described = describe_providers(s)
     assert described.startswith("stt=groq llm=groq (fallbacks: groq:openai/gpt-oss-20b,")
     assert "secret" not in described
-    assert describe_providers(make(llm_fallbacks="")) == "stt=groq llm=groq tts=kokoro"
+    assert (
+        describe_providers(make(llm_fallbacks="")) == "stt=groq llm=groq tts=kokoro (urdu: piper)"
+    )
 
 
 class FakeTranscriptions:
@@ -204,3 +206,65 @@ def test_kokoro_gets_a_quiet_timeout_longer_than_its_synthesis_time(
     build_tts(make(tts_provider="kokoro"))
     (kwargs,) = recorder.calls
     assert kwargs["stop_frame_timeout_s"] == providers.KOKORO_QUIET_TIMEOUT_SECS > 3.0
+
+
+# ---------------------------------------------------------------- Azure voices (D30)
+
+
+@pytest.fixture
+def azure(monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]) -> type[Recorder]:
+    import pipecat.services.azure.tts as azure_mod
+
+    monkeypatch.setattr(azure_mod, "AzureTTSService", recorder)
+    return recorder
+
+
+def az(**over: Any) -> Settings:
+    return make(azure_speech_key="az-test-key", azure_speech_region="eastus", **over)
+
+
+def test_azure_english_voice(azure: type[Recorder]) -> None:
+    build_tts(az(tts_provider="azure"))
+    (kwargs,) = azure.calls
+    assert kwargs["region"] == "eastus"
+    assert kwargs["settings"].kwargs == {"voice": "en-US-JennyNeural", "language": "en-US"}
+
+
+def test_urdu_follows_azure_automatically(azure: type[Recorder]) -> None:
+    providers.build_urdu_tts(az(tts_provider="azure"))
+    (kwargs,) = azure.calls
+    assert kwargs["settings"].kwargs == {"voice": "ur-PK-UzmaNeural", "language": "ur-PK"}
+
+
+def test_urdu_can_use_azure_with_a_local_english_voice(azure: type[Recorder]) -> None:
+    providers.build_urdu_tts(az(tts_provider="piper", urdu_tts_provider="azure"))
+    assert azure.calls[0]["settings"].kwargs["voice"] == "ur-PK-UzmaNeural"
+
+
+def test_urdu_stays_on_piper_by_default(
+    monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]
+) -> None:
+    import pipecat.services.piper.tts as piper_mod
+
+    monkeypatch.setattr(piper_mod, "PiperTTSService", recorder)
+    providers.build_urdu_tts(make(tts_provider="kokoro"))
+    assert recorder.calls[0]["settings"].kwargs["voice"] == "ur_PK-fasih-medium"
+
+
+def test_azure_needs_key_and_region() -> None:
+    with pytest.raises(ProviderConfigError, match="AZURE_SPEECH_KEY"):
+        build_tts(make(tts_provider="azure", azure_speech_region="eastus"))
+    with pytest.raises(ProviderConfigError, match="AZURE_SPEECH_REGION"):
+        build_tts(make(tts_provider="azure", azure_speech_key="az-test-key"))
+
+
+def test_describe_shows_the_urdu_voice_provider_without_the_key() -> None:
+    described = describe_providers(az(tts_provider="piper", urdu_tts_provider="azure"))
+    assert "tts=piper (urdu: azure)" in described
+    assert "az-test-key" not in described
+
+
+def test_real_azure_service_builds_offline() -> None:
+    """The real class constructs without a network call (it connects when the call starts)."""
+    tts = build_tts(az(tts_provider="azure"))
+    assert type(tts).__name__ == "AzureTTSService"

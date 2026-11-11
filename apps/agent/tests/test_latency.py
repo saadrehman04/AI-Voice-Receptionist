@@ -21,6 +21,7 @@ from receptionist_agent.latency import (
     FirstClauseAggregator,
     FullReplyBuffer,
     LatencyFlags,
+    NumberPauseTuner,
     ToolFiller,
     use_clause_chunking,
 )
@@ -164,3 +165,40 @@ def test_flags_come_from_settings() -> None:
         Settings(_env_file=None, tts_text_chunking="full", filler_after_ms=0, vad_stop_secs=0.3)
     )
     assert flags == LatencyFlags(text_chunking="full", filler_after_ms=0, vad_stop_secs=0.3)
+    assert flags.vad_number_stop_secs == 0.8
+
+
+async def test_number_question_lengthens_the_next_pause_then_restores_it() -> None:
+    from pipecat.frames.frames import VADParamsUpdateFrame
+
+    tuner = NumberPauseTuner(normal_secs=0.2, number_secs=0.8)
+    _, up = await run_test(
+        tuner,
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            LLMTextFrame("May I have your name and phone number, please?"),
+            LLMFullResponseEndFrame(),
+            # System frames jump the queue; in a call this comes seconds later, after the caller.
+            SleepFrame(0.1),
+            UserStoppedSpeakingFrame(),  # the caller has read out the number
+            LLMFullResponseStartFrame(),
+            LLMTextFrame("Thank you. Is there parking? Yes, free parking."),  # no number asked
+            LLMFullResponseEndFrame(),
+        ],
+    )
+    updates = [f.params.stop_secs for f in up if isinstance(f, VADParamsUpdateFrame)]
+    assert updates == [0.8, 0.2]
+
+
+async def test_urdu_number_question_counts() -> None:
+    from pipecat.frames.frames import VADParamsUpdateFrame
+
+    _, up = await run_test(
+        NumberPauseTuner(normal_secs=0.2, number_secs=0.8),
+        frames_to_send=[
+            LLMFullResponseStartFrame(),
+            LLMTextFrame("براہ کرم اپنا نام اور فون نمبر بتائیں؟"),
+            LLMFullResponseEndFrame(),
+        ],
+    )
+    assert [f.params.stop_secs for f in up if isinstance(f, VADParamsUpdateFrame)] == [0.8]

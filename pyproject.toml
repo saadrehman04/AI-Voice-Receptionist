@@ -6,6 +6,7 @@ members = ["packages/shared", "apps/agent", "apps/api", "evals"]
 
 [tool.uv.sources]
 receptionist-shared = { workspace = true }
+receptionist-agent = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -15,7 +15,8 @@ from receptionist_shared.tenant import TenantConfig
 LANGUAGE_NAMES = {"en": "English", "ur": "Urdu"}
 
 
-def _facts(tenant: TenantConfig) -> str:
+def business_facts(tenant: TenantConfig) -> str:
+    """The facts block of the prompt: everything the agent may state (also given to the judge)."""
     lines = [f"Business: {tenant.business_name} ({tenant.business_type})"]
     if tenant.business_name_ur:
         lines.append(f"Business name in Urdu: {tenant.business_name_ur}")
@@ -62,7 +63,7 @@ You are on a live phone call: everything you write is spoken aloud.
 Today is {today} ({tenant.timezone}). Use this to work out dates like "tomorrow" or "next Friday".
 
 ## Business facts (the ONLY facts you may state)
-{_facts(tenant)}
+{business_facts(tenant)}
 
 ## Language
 {_language_rules(tenant)}

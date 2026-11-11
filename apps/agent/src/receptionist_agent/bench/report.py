@@ -44,9 +44,45 @@ def _fmt(v: float | None) -> str:
     return "-" if v is None else f"{v:,.0f}"
 
 
+DURATIONS = [
+    ("vad", "VAD notices silence", None, "vad_stop_ms"),
+    ("stt", "STT after VAD", "vad_stop_ms", "stt_final_ms"),
+    ("eot", "end of turn after STT", "stt_final_ms", "turn_released_ms"),
+    ("llm", "LLM first text after end of turn", "turn_released_ms", "llm_first_token_ms"),
+    ("tts", "TTS first audio after LLM text", "llm_first_token_ms", "tts_first_audio_ms"),
+]
+
+
+def stage_durations(r: dict[str, Any]) -> dict[str, float]:
+    """How long each stage took in one turn (only stages that ran in order)."""
+    out: dict[str, float] = {}
+    for key, _label, start, end in DURATIONS:
+        b = r.get(end)
+        a = 0.0 if start is None else r.get(start)
+        if isinstance(a, int | float) and isinstance(b, int | float) and b >= a:
+            out[key] = b - a
+    return out
+
+
+def answered_by(r: dict[str, Any]) -> str | None:
+    """The model behind a turn, if one model answered all of its requests."""
+    targets = set(r.get("llm_targets") or [])
+    return targets.pop() if len(targets) == 1 else None
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     turns = [r for r in rows if r["type"] == "turn"]
     out: dict[str, Any] = {"n": len(turns), "timeouts": sum(r["timed_out"] for r in turns)}
+    durations = [stage_durations(r) for r in turns]
+    out["durations"] = {
+        key: percentile([d[key] for d in durations if key in d], 50) for key, *_ in DURATIONS
+    }
+    groq = [
+        r["first_audio_ms"]
+        for r in turns
+        if r.get("first_audio_ms") is not None and (answered_by(r) or "").startswith("groq:")
+    ]
+    out["groq_first_audio"] = (percentile(groq, 50), len(groq))
     for key, _ in STAGES:
         values = [r[key] for r in turns if r.get(key) is not None]
         out[key] = (percentile(values, 50), percentile(values, 95))
@@ -78,14 +114,57 @@ def render(results: Mapping[str, list[dict[str, Any]]], configs: Mapping[str, An
         "",
         "## Caller stops speaking -> first agent audio (ms)",
         "",
-        "| config | P50 | P95 | under 1 s | turns | timeouts |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| config | P50 | P95 | under 1 s | P50, Groq-answered turns (n) | turns | timeouts |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for n in names:
         s = summaries[n]
         p50, p95 = s["first_audio_ms"]
         under = f"{s['under_1s']}/{s['n']}"
-        lines.append(f"| {n} | {_fmt(p50)} | {_fmt(p95)} | {under} | {s['n']} | {s['timeouts']} |")
+        g50, gn = s["groq_first_audio"]
+        lines.append(
+            f"| {n} | {_fmt(p50)} | {_fmt(p95)} | {under} | {_fmt(g50)} ({gn}) | {s['n']} "
+            f"| {s['timeouts']} |"
+        )
+    lines += [
+        "",
+        "## How long each stage took: P50 per turn (ms)",
+        "",
+        "Each stage is timed on its own, so configs compare fairly even when a different LLM",
+        "answered: TTS changes show in the last column, VAD changes in the first.",
+        "",
+        "| config | " + " | ".join(label for _, label, *_ in DURATIONS) + " |",
+        "|---|" + "---:|" * len(DURATIONS),
+    ]
+    for n in names:
+        d = summaries[n]["durations"]
+        lines.append(f"| {n} | " + " | ".join(_fmt(d[k]) for k, *_ in DURATIONS) + " |")
+    by_model: dict[str, list[float]] = defaultdict(list)
+    by_model_audio: dict[str, list[float]] = defaultdict(list)
+    for n in names:
+        if configs.get(n, {}).get("tts_provider") == "kokoro":
+            continue  # Kokoro's slowness would blur the comparison
+        for r in results[n]:
+            model = answered_by(r) if r["type"] == "turn" else None
+            if model is None:
+                continue
+            if "llm" in (d := stage_durations(r)):
+                by_model[model].append(d["llm"])
+            if r.get("first_audio_ms") is not None:
+                by_model_audio[model].append(r["first_audio_ms"])
+    lines += [
+        "",
+        "## By the LLM that answered (all non-Kokoro configs)",
+        "",
+        "| model | LLM first text after end of turn, P50 | first audio, P50 | P95 | turns |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for model in sorted(by_model_audio, key=lambda m: -len(by_model_audio[m])):
+        audio = by_model_audio[model]
+        lines.append(
+            f"| {model} | {_fmt(percentile(by_model[model], 50))} | "
+            f"{_fmt(percentile(audio, 50))} | {_fmt(percentile(audio, 95))} | {len(audio)} |"
+        )
     lines += ["", "## Where the time goes: P50 offsets from caller stop (ms)", ""]
     lines.append("| config | " + " | ".join(label for _, label in STAGES[1:]) + " |")
     lines.append("|---|" + "---:|" * (len(STAGES) - 1))

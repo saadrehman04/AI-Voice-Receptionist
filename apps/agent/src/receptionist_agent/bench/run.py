@@ -51,8 +51,9 @@ from pipecat.workers.runner import WorkerRunner
 from receptionist_agent.bench.replay import ReplayTransport
 from receptionist_agent.bench.synth import Synth, caller_audio
 from receptionist_agent.bot import Call, build_task, prepare_call
-from receptionist_agent.brain.backend import InMemoryBackend
+from receptionist_agent.brain.backend import BookingBackend, InMemoryBackend
 from receptionist_agent.brain.prompt import greeting
+from receptionist_agent.brain.tools import ToolCallHook
 from receptionist_agent.latency import prewarm
 from receptionist_agent.llm_fallback import LlmTarget
 from receptionist_shared import Settings
@@ -73,6 +74,7 @@ _PHASE4 = {  # how Phases 1-4 shipped
     "prewarm_connections": False,
     "llm_simple_turn_model": "",
     "vad_stop_secs": 0.2,
+    "vad_number_stop_secs": 0,
 }
 _PIPER = _PHASE4 | {"tts_provider": "piper"}
 _CLAUSE = _PIPER | {"tts_text_chunking": "clause"}
@@ -88,6 +90,9 @@ CONFIGS: dict[str, dict[str, Any]] = {
     "prewarm": _PREWARM,
     "route-simple": _ROUTE,
     "vad-0.15": _ROUTE | {"vad_stop_secs": 0.15},
+    "number-pause": _ROUTE | {"vad_number_stop_secs": 0.8},  # = the shipped defaults
+    # Needs AZURE_SPEECH_KEY / AZURE_SPEECH_REGION; run with --configs azure.
+    "azure": _ROUTE | {"vad_number_stop_secs": 0.8, "tts_provider": "azure"},
 }
 
 
@@ -192,8 +197,18 @@ def _ms(t: int | None, zero: int) -> float | None:
 class BenchCall:
     """One scripted call on a fresh pipeline."""
 
-    def __init__(self, settings: Settings, tenant: str, *, label: str) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        tenant: str,
+        *,
+        label: str,
+        backend: BookingBackend | None = None,
+        now: datetime | None = None,
+        on_tool_call: ToolCallHook | None = None,
+    ) -> None:
         self.settings, self.tenant, self.label = settings, tenant, label
+        self._backend, self._now, self._on_tool_call = backend, now, on_tool_call
         self.transport = ReplayTransport()
         self.targets_used: list[str] = []
         self.call: Call | None = None
@@ -206,7 +221,9 @@ class BenchCall:
             self.settings,
             call_id=f"bench-{self.label}-{uuid.uuid4().hex[:6]}",
             tenant_slug=self.tenant,
-            backend=InMemoryBackend(),
+            backend=self._backend or InMemoryBackend(),
+            now=self._now,
+            on_tool_call=self._on_tool_call,
         )
         if self.call.flags.prewarm:  # as run_bot does
             self._warmup = asyncio.create_task(

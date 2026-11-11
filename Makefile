@@ -6,7 +6,7 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker
+.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -30,6 +30,9 @@ agent: ## Run the voice agent; talk to it at http://localhost:7860/client
 
 chat: ## Text chat with the receptionist (real LLM + tools, stub bookings; ARGS="--tenant demo-workshop")
 	$(UV_RUN) python -m receptionist_agent.chat $(ARGS)
+
+traces: ## Start Jaeger for OpenTelemetry traces (UI http://localhost:16686); set OTEL_ENABLED=true
+	docker compose --profile tracing up -d jaeger
 
 bench: ## Latency benchmark: 20 utterances through the real pipeline per config -> docs/benchmarks/ (ARGS="--configs baseline")
 	$(UV_RUN) python -m receptionist_agent.bench.run $(ARGS)

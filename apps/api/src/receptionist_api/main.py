@@ -78,7 +78,12 @@ async def build_resources(settings: Settings) -> Resources:
     sessions = make_sessionmaker(engine)
     redis = Redis.from_url(settings.redis_url)
     calendar, closers = make_calendar(settings)
-    bookings = BookingService(sessions, SlotHolds(redis, hold_secs=settings.hold_secs), calendar)
+    bookings = BookingService(
+        sessions,
+        SlotHolds(redis, hold_secs=settings.hold_secs),
+        calendar,
+        cache_secs=settings.availability_cache_secs,
+    )
     tenants = TenantRegistry()
     store = TenantStore(sessions, tenants)
     await store.seed(list_tenants(Path(settings.tenants_dir)))

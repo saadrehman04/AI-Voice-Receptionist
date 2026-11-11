@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +48,17 @@ from receptionist_agent.brain.api_backend import ApiBackend
 from receptionist_agent.brain.backend import BookingBackend, InMemoryBackend
 from receptionist_agent.brain.prompt import build_system_prompt, greeting
 from receptionist_agent.brain.state import CallState
-from receptionist_agent.brain.tools import ReceptionistTools, register_tools, tools_schema
+from receptionist_agent.brain.tools import (
+    ReceptionistTools,
+    ToolCallHook,
+    register_tools,
+    tools_schema,
+)
 from receptionist_agent.language import CallerLanguageTracker, ReplyLanguageRouter
 from receptionist_agent.latency import (
     FullReplyBuffer,
     LatencyFlags,
+    NumberPauseTuner,
     ToolFiller,
     prewarm,
     use_clause_chunking,
@@ -63,6 +71,7 @@ from receptionist_agent.records import (
     write_wav,
 )
 from receptionist_agent.timing import JsonlTurnWriter, TurnTimingObserver
+from receptionist_agent.tracing import configure_tracing, record_turn_span
 from receptionist_shared import Settings, get_settings
 from receptionist_shared.tenant import TenantConfig, load_tenant_by_slug
 
@@ -97,6 +106,7 @@ class Call:
     recording: AudioBufferProcessor | None = None
     recording_path: Path | None = None
     flags: LatencyFlags = field(default_factory=LatencyFlags)
+    tracing: bool = False  # OpenTelemetry spans for this call (OTEL_ENABLED)
 
 
 def make_recorder(call_id: str, tenant: TenantConfig, backend: BookingBackend) -> CallRecorder:
@@ -128,6 +138,12 @@ def speech_stage(call: Call) -> list[FrameProcessor]:
             return call.state.language
 
         stage.append(ToolFiller(after_ms=flags.filler_after_ms, language=language))
+    if flags.vad_number_stop_secs > 0:
+        stage.append(
+            NumberPauseTuner(
+                normal_secs=flags.vad_stop_secs, number_secs=flags.vad_number_stop_secs
+            )
+        )
     if flags.text_chunking == "full":
         stage.append(FullReplyBuffer())
     elif flags.text_chunking == "clause":
@@ -186,6 +202,8 @@ def build_task(
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         observers=observers or [],
         conversation_id=call.call_id,
+        enable_tracing=call.tracing,
+        additional_span_attributes={"tenant.slug": call.tenant.slug},
     )
     return task, context
 
@@ -196,11 +214,17 @@ def prepare_call(
     call_id: str,
     tenant_slug: str | None = None,
     backend: BookingBackend | None = None,
+    now: datetime | None = None,
+    on_tool_call: ToolCallHook | None = None,
 ) -> Call:
-    """Blocking setup for one call (loads the tenant and local models). Run it in a thread."""
+    """Blocking setup for one call (loads the tenant and local models). Run it in a thread.
+
+    `now` freezes the clock (evals); `on_tool_call` also sees every tool call (evals, tests).
+    """
     backend = backend or default_backend(settings)
     tenant = load_tenant(settings, tenant_slug or settings.default_tenant, backend)
-    prompt = build_system_prompt(tenant, tenant.now())
+    frozen = now.astimezone(tenant.tz) if now is not None else None
+    prompt = build_system_prompt(tenant, frozen or tenant.now())
     services = build_services(settings, prompt, urdu="ur" in tenant.languages)
     state = CallState()
     recorder = make_recorder(call_id, tenant, backend)
@@ -209,8 +233,19 @@ def prepare_call(
         name: str, args: dict[str, Any], result: dict[str, Any], ok: bool, duration_ms: int
     ) -> None:
         recorder.tool_call(name, args, result, ok=ok, duration_ms=duration_ms)
+        if on_tool_call is not None:
+            on_tool_call(name, args, result, ok, duration_ms)
 
-    tools = ReceptionistTools(tenant, state, backend, call_id=call_id, on_tool_call=record_tool)
+    clock: Callable[[], datetime] | None = None
+    if frozen is not None:
+        fixed = frozen
+
+        def clock() -> datetime:
+            return fixed
+
+    tools = ReceptionistTools(
+        tenant, state, backend, call_id=call_id, on_tool_call=record_tool, clock=clock
+    )
     call = Call(
         call_id=call_id,
         tenant=tenant,
@@ -219,6 +254,7 @@ def prepare_call(
         services=services,
         recorder=recorder,
         flags=LatencyFlags.from_settings(settings),
+        tracing=configure_tracing(settings),
     )
     if settings.record_calls:
         # Stereo: caller on the left channel, agent on the right. Written once at hang-up.
@@ -265,6 +301,8 @@ async def run_bot(
         async def on_turn_timing(record: dict[str, Any]) -> None:
             await writer.write(record)
             call.recorder.timing(record)
+            if call.tracing:
+                record_turn_span(record)
 
         timing = TurnTimingObserver(call_id=call_id, on_turn=on_turn_timing)
         task, _context = build_task(transport, call, observers=[timing])

@@ -40,6 +40,16 @@ services:
       timeout: 3s
       retries: 10
 
+  # Optional trace viewer (Phase 5): `make traces`, then http://localhost:16686.
+  # Not started by `make up` (profile). Keeps traces in memory only.
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    profiles: ["tracing"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:16686:16686"  # UI
+      - "127.0.0.1:4318:4318"    # OTLP over HTTP (the agent exports here)
+
 volumes:
   postgres_data:
   redis_data:

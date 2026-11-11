@@ -14,6 +14,8 @@ from receptionist_agent.llm_fallback import (
     GEMINI_CHAT_URL,
     GEMINI_PLACEHOLDER_SIGNATURE,
     GROQ_CHAT_URL,
+    SHARED_BUDGETS,
+    BudgetBook,
     FallbackTransport,
     GeminiStreamFix,
     gemini_target,
@@ -85,7 +87,10 @@ def make(
     providers = Providers(statuses, headers or {})
     clock = Clock()
     transport = FallbackTransport(
-        targets or [BIG, SMALL, GEMINI], inner=httpx2.MockTransport(providers), clock=clock
+        targets or [BIG, SMALL, GEMINI],
+        inner=httpx2.MockTransport(providers),
+        clock=clock,
+        budgets=BudgetBook(),  # each test starts with nothing known
     )
     return httpx2.AsyncClient(transport=transport), providers, clock
 
@@ -126,6 +131,40 @@ async def test_cooling_target_is_skipped_until_its_cooldown_ends() -> None:
     providers.seen.clear()
     await post(client)
     assert models(providers) == ["openai/gpt-oss-120b"]
+
+
+async def test_budget_refills_continuously_not_only_at_reset() -> None:
+    """Groq's bucket refills steadily: 10 of 8000 left, full in 60 s = 133 tokens/s back."""
+    headers = {
+        "openai/gpt-oss-120b": {
+            "x-ratelimit-limit-tokens": "8000",
+            "x-ratelimit-remaining-tokens": "10",
+            "x-ratelimit-reset-tokens": "60s",
+        }
+    }
+    client, providers, clock = make({}, headers)
+    await post(client)
+    needed = FallbackTransport([BIG], budgets=BudgetBook())._estimate_tokens(BODY)
+    providers.seen.clear()
+    await post(client)  # not enough yet
+    assert models(providers) == ["openai/gpt-oss-20b"]
+    clock.now += (needed - 10) / (7990 / 60) + 0.1  # just enough has refilled, long before 60 s
+    providers.seen.clear()
+    await post(client)
+    assert models(providers)[0] == "openai/gpt-oss-120b"
+
+
+def test_budgets_are_shared_across_calls_by_default() -> None:
+    a, b = FallbackTransport([BIG]), FallbackTransport([BIG])
+    assert a._budgets is b._budgets is SHARED_BUDGETS
+    assert BudgetBook()[BIG] is not SHARED_BUDGETS[BIG]
+
+
+def test_urdu_is_not_overcounted() -> None:
+    urdu = {"messages": [{"role": "user", "content": "جی ہاں، ٹھیک ہے" * 20}]}
+    english = {"messages": [{"role": "user", "content": "yes that's ok" * 20}]}
+    t = FallbackTransport([BIG], budgets=BudgetBook())
+    assert t._estimate_tokens(urdu) < 2 * t._estimate_tokens(english)
 
 
 async def test_low_token_budget_skips_ahead_before_a_429() -> None:
@@ -191,7 +230,9 @@ async def test_connection_error_falls_through() -> None:
             raise httpx2.ConnectError("no route")
         return httpx2.Response(200, json={"ok": True})
 
-    transport = FallbackTransport([BIG, GEMINI], inner=httpx2.MockTransport(handler))
+    transport = FallbackTransport(
+        [BIG, GEMINI], inner=httpx2.MockTransport(handler), budgets=BudgetBook()
+    )
     async with httpx2.AsyncClient(transport=transport) as client:
         assert (await post(client)).json() == {"ok": True}
 
@@ -374,7 +415,10 @@ def test_is_simple_turn(text: str, simple: bool) -> None:
 async def test_simple_turns_try_the_small_model_first() -> None:
     providers = Providers({}, {})
     transport = FallbackTransport(
-        [BIG, SMALL, GEMINI], inner=httpx2.MockTransport(providers), simple_target=SMALL.name
+        [BIG, SMALL, GEMINI],
+        inner=httpx2.MockTransport(providers),
+        simple_target=SMALL.name,
+        budgets=BudgetBook(),
     )
     async with httpx2.AsyncClient(transport=transport) as client:
         await client.post(GROQ_CHAT_URL, json=caller_says("Yes, that's right."))

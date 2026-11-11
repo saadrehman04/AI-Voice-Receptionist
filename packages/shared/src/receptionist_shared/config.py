@@ -18,7 +18,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 Environment = Literal["dev", "test", "prod"]
 SttProvider = Literal["groq", "faster_whisper"]
 LlmProvider = Literal["groq", "gemini", "ollama"]
-TtsProvider = Literal["kokoro", "piper"]
+TtsProvider = Literal["kokoro", "piper", "azure"]
+UrduTtsProvider = Literal["auto", "piper", "azure"]
 
 
 class Settings(BaseSettings):
@@ -61,7 +62,14 @@ class Settings(BaseSettings):
     filler_after_ms: int = Field(default=400, ge=0)  # 0 = no "one moment" fillers
     prewarm_connections: bool = True
     vad_stop_secs: float = Field(default=0.2, gt=0, le=2)
+    # After the agent asks for a phone number, the caller's next turn needs this much silence.
+    vad_number_stop_secs: float = Field(default=0.8, ge=0, le=3)  # 0 = same as vad_stop_secs
     availability_cache_secs: int = Field(default=30, ge=0)  # api side; 0 = no cache
+
+    # --- tracing (OpenTelemetry; `make traces` runs a local Jaeger) ---
+    otel_enabled: bool = False
+    otel_exporter: Literal["otlp", "console"] = "otlp"
+    otel_endpoint: str = "http://localhost:4318/v1/traces"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2:3b"
     faster_whisper_model: str = "small"
@@ -69,6 +77,13 @@ class Settings(BaseSettings):
     piper_voice: str = "en_US-lessac-medium"
     # Urdu replies are spoken by Piper (Kokoro has no Urdu); see DECISIONS D10.
     piper_urdu_voice: str = "ur_PK-fasih-medium"
+    # Who speaks Urdu replies: "auto" = Azure when TTS_PROVIDER=azure, else Piper (D30).
+    urdu_tts_provider: UrduTtsProvider = "auto"
+    # Azure AI Speech (free F0 tier: 0.5M characters/month). Key + region from the Azure portal.
+    azure_speech_key: SecretStr | None = None
+    azure_speech_region: str | None = None
+    azure_voice_en: str = "en-US-JennyNeural"
+    azure_voice_ur: str = "ur-PK-UzmaNeural"  # or ur-PK-AsadNeural (male)
     # ISO code like "en" or "ur"; unset = let Whisper auto-detect per utterance.
     stt_language: str | None = None
 

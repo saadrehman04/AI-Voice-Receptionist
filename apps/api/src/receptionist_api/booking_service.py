@@ -9,12 +9,19 @@ Defence in depth against double booking, in the order a write meets them:
 
 The calendar write happens inside the DB transaction: if Google fails, the row is rolled back;
 if the commit fails after the event was created, the event is deleted again.
+
+Availability may be cached (`cache_secs`, Phase 5): the calendar + DB busy times per tenant and
+day are kept for a few seconds, so a caller asking about several days doesn't wait on Google
+each time. It never weakens the defences above: holds are always read live, every write in
+this process clears the tenant's cache, and step 3 re-checks without the cache. The worst a
+stale entry can do is offer a slot that the write then refuses with alternatives.
 """
 
 from __future__ import annotations
 
 import secrets
 import string
+import time as time_module
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
@@ -96,12 +103,18 @@ class BookingService:
         calendar: Calendar,
         *,
         clock: Callable[[TenantConfig], datetime] | None = None,
+        cache_secs: float = 0.0,
+        monotonic: Callable[[], float] = time_module.monotonic,
     ) -> None:
         self._sessions = sessions
         self._holds = holds
         self._calendar = calendar
         self._clock = clock or (lambda tenant: tenant.now())
         self._tenant_ids: dict[str, uuid.UUID] = {}
+        self._cache_secs = cache_secs
+        self._monotonic = monotonic
+        # (tenant_id, day) -> (expires_at, calendar + DB busy intervals)
+        self._busy_cache: dict[tuple[uuid.UUID, date], tuple[float, list[Interval]]] = {}
 
     @property
     def hold_secs(self) -> int:
@@ -157,14 +170,31 @@ class BookingService:
         return [Interval(s, e) for s, e, code in rows if code != exclude_code]
 
     async def _busy_for_day(self, tenant: TenantConfig, day: date, call_id: str) -> list[Interval]:
+        tenant_id = await self._tenant_id(tenant)
+        booked = await self._booked_for_day(tenant, tenant_id, day)
+        held = await self._holds.held_by_others(tenant, day, call_id)  # always live
+        return booked + held
+
+    async def _booked_for_day(
+        self, tenant: TenantConfig, tenant_id: uuid.UUID, day: date
+    ) -> list[Interval]:
+        """Calendar + DB busy times for a day; cached for `cache_secs` if set."""
+        key = (tenant_id, day)
+        cached = self._busy_cache.get(key)
+        if cached is not None and cached[0] > self._monotonic():
+            return list(cached[1])
         start = datetime.combine(day, time.min, tzinfo=tenant.tz)
         end = start + timedelta(days=1)
-        tenant_id = await self._tenant_id(tenant)
         cal = await self._calendar.busy(self.calendar_id(tenant), start, end)
         async with self._sessions() as session:
             db = await self._db_busy(session, tenant_id, start, end)
-        held = await self._holds.held_by_others(tenant, day, call_id)
-        return cal + db + held
+        if self._cache_secs > 0:
+            self._busy_cache[key] = (self._monotonic() + self._cache_secs, cal + db)
+        return cal + db
+
+    def _forget_busy(self, tenant_id: uuid.UUID) -> None:
+        for key in [k for k in self._busy_cache if k[0] == tenant_id]:
+            del self._busy_cache[key]
 
     async def _is_free(
         self,
@@ -285,6 +315,7 @@ class BookingService:
                 raise SlotTakenError("slot no longer free")
             return await self._insert(tenant, tenant_id, service, start, end, req)
         finally:
+            self._forget_busy(tenant_id)
             await self._holds.release(tenant, req.call_id)
 
     async def _insert(
@@ -352,6 +383,14 @@ class BookingService:
         self, tenant: TenantConfig, code: str, req: RescheduleRequest
     ) -> BookingOut:
         new_start = req.start.astimezone(tenant.tz)
+        try:
+            return await self._reschedule(tenant, code, req, new_start)
+        finally:
+            self._forget_busy(await self._tenant_id(tenant))
+
+    async def _reschedule(
+        self, tenant: TenantConfig, code: str, req: RescheduleRequest, new_start: datetime
+    ) -> BookingOut:
         async with transaction(self._sessions) as session:
             row = await self._get(session, tenant, code)
             if row.status != BookingStatus.CONFIRMED.value:
@@ -388,6 +427,12 @@ class BookingService:
                 await self._holds.release(tenant, req.call_id)
 
     async def cancel(self, tenant: TenantConfig, code: str) -> BookingOut:
+        try:
+            return await self._cancel(tenant, code)
+        finally:
+            self._forget_busy(await self._tenant_id(tenant))
+
+    async def _cancel(self, tenant: TenantConfig, code: str) -> BookingOut:
         async with transaction(self._sessions) as session:
             row = await self._get(session, tenant, code)
             if row.status == BookingStatus.CANCELLED.value:

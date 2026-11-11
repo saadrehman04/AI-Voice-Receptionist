@@ -177,10 +177,37 @@ def build_tts(settings: Settings) -> TTSService:
             from pipecat.services.piper.tts import PiperTTSService
 
             return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_voice))
+        case "azure":
+            return build_azure_tts(settings, voice=settings.azure_voice_en, language="en-US")
+
+
+def build_azure_tts(settings: Settings, *, voice: str, language: str) -> TTSService:
+    """Azure AI Speech, streaming over its SDK, with word timestamps (DECISIONS D30)."""
+    key = _require_key(settings.azure_speech_key, "AZURE_SPEECH_KEY", "Azure TTS")
+    if not settings.azure_speech_region:
+        raise ProviderConfigError(
+            "Azure TTS is selected but AZURE_SPEECH_REGION is not set (e.g. eastus). "
+            "It is shown next to the key in the Azure portal."
+        )
+    from pipecat.services.azure.tts import AzureTTSService
+
+    return AzureTTSService(
+        api_key=key,
+        region=settings.azure_speech_region,
+        settings=AzureTTSService.Settings(voice=voice, language=language),
+    )
+
+
+def urdu_tts_provider(settings: Settings) -> str:
+    if settings.urdu_tts_provider != "auto":
+        return settings.urdu_tts_provider
+    return "azure" if settings.tts_provider == "azure" else "piper"
 
 
 def build_urdu_tts(settings: Settings) -> TTSService:
-    """Piper's Urdu voice: the only free Urdu TTS we found (DECISIONS D10)."""
+    """The voice for Urdu replies: Azure's ur-PK voices, or Piper's (DECISIONS D10, D30)."""
+    if urdu_tts_provider(settings) == "azure":
+        return build_azure_tts(settings, voice=settings.azure_voice_ur, language="ur-PK")
     from pipecat.services.piper.tts import PiperTTSService
 
     return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_urdu_voice))
@@ -203,4 +230,7 @@ def describe_providers(settings: Settings) -> str:
     llm: str = settings.llm_provider
     if llm == "groq" and settings.llm_fallbacks.strip():
         llm += f" (fallbacks: {settings.llm_fallbacks})"
-    return f"stt={settings.stt_provider} llm={llm} tts={settings.tts_provider}"
+    tts: str = settings.tts_provider
+    if urdu_tts_provider(settings) != tts:
+        tts += f" (urdu: {urdu_tts_provider(settings)})"
+    return f"stt={settings.stt_provider} llm={llm} tts={tts}"
