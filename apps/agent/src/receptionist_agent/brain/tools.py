@@ -11,7 +11,7 @@ enforces the read-back-then-confirm rule.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import Any
 
 from loguru import logger
@@ -21,23 +21,21 @@ from pipecat.frames.frames import EndWorkerFrame, FunctionCallResultProperties
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 from receptionist_agent.brain.backend import (
+    Availability,
     Booking,
     BookingBackend,
     BookingNotFoundError,
     SlotTakenError,
     idempotency_key,
 )
-from receptionist_agent.brain.knowledge import lookup
 from receptionist_agent.brain.state import CallState, Intent, StateError
-from receptionist_shared.availability import free_slots, pick_options, spoken_slot
+from receptionist_shared.availability import spoken_slot
 from receptionist_shared.phone import normalize_pk_phone, spoken_digits
 from receptionist_shared.tenant import Service, TenantConfig
 
 ToolResult = dict[str, Any]
 Handler = Callable[[Mapping[str, Any]], Awaitable[ToolResult]]
 Clock = Callable[[], datetime]
-
-NEXT_DAYS_TO_SEARCH = 7
 
 
 def _err(message: str, **extra: Any) -> ToolResult:
@@ -219,10 +217,14 @@ class ReceptionistTools:
     def _phone(self, raw: str | None) -> str | None:
         return normalize_pk_phone(raw) if raw else None
 
-    async def _options(self, service: Service, day: date, preferred: time | None) -> list[datetime]:
-        busy = await self.backend.busy_intervals(self.tenant, day)
-        slots = free_slots(self.tenant, service, day, busy, now=self._clock())
-        return pick_options(slots, preferred=preferred)
+    async def _search(self, service: Service, day: date, preferred: time | None) -> Availability:
+        return await self.backend.availability(
+            self.tenant, service.name, day, preferred=preferred, call_id=self.call_id
+        )
+
+    async def _alternatives(self, service: Service, near: datetime) -> list[dict[str, str]]:
+        found = await self._search(service, near.date(), near.time())
+        return self._offer([o for o in found.options if o != near])
 
     def _offer(self, slots: list[datetime]) -> list[dict[str, str]]:
         self.state.record_offer(slots)
@@ -275,27 +277,23 @@ class ReceptionistTools:
             self.state.set_intent(Intent.BOOK)
         self.state.update(service=service.name, preferred_date=day.isoformat())
 
-        options = await self._options(service, day, preferred)
-        if options:
+        found = await self._search(service, day, preferred)
+        if found.options and found.requested_day_available:
             return {
                 "ok": True,
                 "available": True,
-                "date": day.isoformat(),
-                "options": self._offer(options),
+                "date": found.day.isoformat(),
+                "options": self._offer(found.options),
             }
-
-        # Nothing that day: look ahead so the caller gets real alternatives.
-        for offset in range(1, NEXT_DAYS_TO_SEARCH + 1):
-            alt_day = day + timedelta(days=offset)
-            options = await self._options(service, alt_day, preferred)
-            if options:
-                return {
-                    "ok": True,
-                    "available": False,
-                    "note": f"Nothing free on {day:%A %d %B}. The next free day is shown.",
-                    "date": alt_day.isoformat(),
-                    "options": self._offer(options),
-                }
+        if found.options:
+            # Nothing that day: the backend looked ahead so the caller gets real alternatives.
+            return {
+                "ok": True,
+                "available": False,
+                "note": f"Nothing free on {day:%A %d %B}. The next free day is shown.",
+                "date": found.day.isoformat(),
+                "options": self._offer(found.options),
+            }
         return {
             "ok": True,
             "available": False,
@@ -330,6 +328,16 @@ class ReceptionistTools:
             "phone": spoken_digits(phone),
         }
         if not _bool(args, "caller_confirmed"):
+            # Hold the slot while we read it back, so nobody takes it during the pause.
+            if not await self.backend.hold(
+                self.tenant, service=service.name, start=start, call_id=self.call_id
+            ):
+                self.state.clear_pending()
+                return _err(
+                    "another caller is booking that time right now",
+                    options=await self._alternatives(service, start),
+                    hint="Apologise and offer these instead.",
+                )
             self.state.prepare("book", details)
             return {
                 "ok": True,
@@ -344,13 +352,11 @@ class ReceptionistTools:
             self.state.prepare("book", details)
             return _err(str(exc), read_back=readback)
 
-        end = start + timedelta(minutes=service.duration_min)
         try:
             booking = await self.backend.create_booking(
                 self.tenant,
                 service=service.name,
                 start=start,
-                end=end,
                 caller_name=name,
                 phone=phone,
                 call_id=self.call_id,
@@ -359,10 +365,9 @@ class ReceptionistTools:
         except SlotTakenError:
             self.state.clear_pending()
             self.state.confirmed = False
-            options = await self._options(service, start.date(), start.time())
             return _err(
                 "that slot was just taken by someone else",
-                options=self._offer(options),
+                options=await self._alternatives(service, start),
                 hint="Apologise and offer these instead.",
             )
         self.state.mark_booked(booking.id)
@@ -388,12 +393,6 @@ class ReceptionistTools:
                 "that time was not offered; call check_availability for the booking's service",
                 service=found.service,
             )
-        service = self._service(found.service)
-        duration = (
-            service.duration_min
-            if service
-            else int((found.end - found.start).total_seconds() // 60)
-        )
         details = (found.id, new_start.isoformat())
         readback = {
             "service": found.service,
@@ -402,6 +401,10 @@ class ReceptionistTools:
             "name": found.caller_name,
         }
         if not _bool(args, "caller_confirmed"):
+            if not await self.backend.hold(
+                self.tenant, service=found.service, start=new_start, call_id=self.call_id
+            ):
+                return _err("another caller is booking that time right now; check again")
             self.state.prepare("reschedule", details)
             return {
                 "ok": True,
@@ -419,7 +422,8 @@ class ReceptionistTools:
                 self.tenant,
                 found.id,
                 start=new_start,
-                end=new_start + timedelta(minutes=duration),
+                call_id=self.call_id,
+                idempotency_key=idempotency_key(self.call_id, "reschedule", *details),
             )
         except SlotTakenError:
             self.state.clear_pending()
@@ -454,7 +458,12 @@ class ReceptionistTools:
         except StateError as exc:
             self.state.prepare("cancel", details)
             return _err(str(exc), read_back=readback)
-        cancelled = await self.backend.cancel_booking(self.tenant, found.id)
+        try:
+            cancelled = await self.backend.cancel_booking(
+                self.tenant, found.id, call_id=self.call_id
+            )
+        except BookingNotFoundError:
+            return _err("booking no longer exists")
         self.state.clear_pending()
         return {"ok": True, "cancelled": True, **self._describe(cancelled)}
 
@@ -462,7 +471,10 @@ class ReceptionistTools:
         question = _str(args, "question") or ""
         if self.state.intent == Intent.UNKNOWN:
             self.state.set_intent(Intent.QUESTION)
-        return lookup(self.tenant, question, language=self.state.language or "en").as_tool_result()
+        found = await self.backend.lookup(
+            self.tenant, question, language=self.state.language or "en"
+        )
+        return found.as_tool_result()
 
     async def take_message(self, args: Mapping[str, Any]) -> ToolResult:
         message = _str(args, "message")

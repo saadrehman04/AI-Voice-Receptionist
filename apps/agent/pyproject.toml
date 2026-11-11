@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Pipecat voice agent: VAD -> STT -> LLM -> TTS (pipeline arrives in Phase 1)."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "httpx>=0.28.1",
     "pipecat-ai[google,groq,kokoro,ollama,piper,runner,silero,webrtc,whisper]==1.15.0",
     "receptionist-shared",
 ]

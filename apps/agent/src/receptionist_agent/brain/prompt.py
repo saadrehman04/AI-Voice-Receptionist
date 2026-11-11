@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from receptionist_agent.brain.knowledge import describe_hours, describe_service
+from receptionist_shared.knowledge import describe_hours, describe_service
 from receptionist_shared.tenant import TenantConfig
 
 LANGUAGE_NAMES = {"en": "English", "ur": "Urdu"}

@@ -40,6 +40,7 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
+from receptionist_agent.brain.api_backend import ApiBackend
 from receptionist_agent.brain.backend import BookingBackend, InMemoryBackend
 from receptionist_agent.brain.prompt import build_system_prompt, greeting
 from receptionist_agent.brain.state import CallState
@@ -50,8 +51,22 @@ from receptionist_agent.timing import JsonlTurnWriter, TurnTimingObserver
 from receptionist_shared import Settings, get_settings
 from receptionist_shared.tenant import TenantConfig, load_tenant_by_slug
 
-# Phase 2 stub: one shared in-memory backend per process. Phase 3 swaps in the api.
-_DEFAULT_BACKEND = InMemoryBackend()
+_backend: BookingBackend | None = None
+
+
+def default_backend(settings: Settings) -> BookingBackend:
+    """One backend per process, shared by all calls (BOOKING_BACKEND=memory|api)."""
+    global _backend
+    if _backend is None:
+        if settings.booking_backend == "api":
+            if settings.agent_api_token is None:
+                raise RuntimeError("BOOKING_BACKEND=api needs AGENT_API_TOKEN")
+            _backend = ApiBackend(
+                settings.api_base_url, settings.agent_api_token.get_secret_value()
+            )
+        else:
+            _backend = InMemoryBackend()
+    return _backend
 
 
 @dataclass
@@ -124,7 +139,7 @@ def prepare_call(
     prompt = build_system_prompt(tenant, tenant.now())
     services = build_services(settings, prompt, urdu="ur" in tenant.languages)
     state = CallState()
-    tools = ReceptionistTools(tenant, state, backend or _DEFAULT_BACKEND, call_id=call_id)
+    tools = ReceptionistTools(tenant, state, backend or default_backend(settings), call_id=call_id)
     return Call(call_id=call_id, tenant=tenant, state=state, tools=tools, services=services)
 
 

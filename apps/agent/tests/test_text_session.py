@@ -61,7 +61,7 @@ def booking_script(messages: Sequence[dict[str, Any]]) -> Step:
 
 
 async def test_scripted_booking_conversation(salon: TenantConfig, monday_9am: datetime) -> None:
-    backend = InMemoryBackend()
+    backend = InMemoryBackend(clock=lambda: monday_9am)
     state = CallState()
     tools = ReceptionistTools(salon, state, backend, call_id="t-1", clock=lambda: monday_9am)
     llm = ScriptedLLM(booking_script)

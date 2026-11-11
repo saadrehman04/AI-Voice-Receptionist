@@ -20,6 +20,7 @@ def backend() -> InMemoryBackend:
 def make_tools(
     tenant: TenantConfig, backend: InMemoryBackend, now: datetime, call_id: str = "call-1"
 ) -> ReceptionistTools:
+    backend.clock = lambda: now
     return ReceptionistTools(tenant, CallState(), backend, call_id=call_id, clock=lambda: now)
 
 
@@ -174,9 +175,36 @@ async def test_retried_commit_is_idempotent(
     tools = make_tools(salon, backend, monday_9am)
     start = (await offer(tools))["options"][0]["start"]
     first = await book(tools, start)
-    again = await book(tools, start)  # e.g. the LLM repeats the whole flow
-    assert again["booking_id"] == first["booking_id"]
+    # The LLM repeats the commit: the read-back was used up, so nothing new is written.
+    again = await tools.run("create_booking", booking_args(start, caller_confirmed=True))
+    assert again["ok"] is False
     assert len(backend.bookings) == 1
+    # And at the backend, the same idempotency key returns the same booking.
+    booking = backend.bookings[first["booking_id"]]
+    key = next(k for k, v in backend.by_key.items() if v == booking.id)
+    repeat = await backend.create_booking(
+        salon,
+        service="Haircut",
+        start=booking.start,
+        caller_name="Sara",
+        phone=booking.phone,
+        call_id="call-1",
+        idempotency_key=key,
+    )
+    assert repeat.id == booking.id
+    assert len(backend.bookings) == 1
+
+
+async def test_held_slot_is_hidden_from_other_callers(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    a = make_tools(salon, backend, monday_9am, call_id="call-a")
+    b = make_tools(salon, backend, monday_9am, call_id="call-b")
+    start = (await offer(a))["options"][1]["start"]
+    held = await a.run("create_booking", booking_args(start))  # read-back -> hold
+    assert held["booked"] is False
+    offered_to_b = [o["start"] for o in (await offer(b))["options"]]
+    assert start not in offered_to_b
 
 
 async def test_slot_taken_by_another_caller(
@@ -187,9 +215,10 @@ async def test_slot_taken_by_another_caller(
     start = (await offer(a))["options"][1]["start"]
     await offer(b)  # both callers were offered the same slot
     assert (await book(a, start))["booked"] is True
-    result = await book(b, start)
+    result = await b.run("create_booking", booking_args(start))  # B's read-back
     assert result["ok"] is False
-    assert "just taken" in result["error"]
+    assert "another caller" in result["error"]
+    assert result["options"]
     assert start not in [o["start"] for o in result["options"]]
     assert len(backend.bookings) == 1
 
