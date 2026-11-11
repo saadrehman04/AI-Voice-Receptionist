@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # Python: uv reads .python-version (3.12) and installs it.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # Web: Node from apps/web/.nvmrc, pnpm version from apps/web/package.json.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: apps/web/.nvmrc
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+          cache: true
+          cache_dependency_path: apps/web/pnpm-lock.yaml
+
+      - name: Install
+        run: |
+          uv sync --all-packages --locked
+          pnpm --dir apps/web install --frozen-lockfile
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test

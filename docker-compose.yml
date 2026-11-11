@@ -1,0 +1,45 @@
+# Local infrastructure only: Postgres and Redis. Our own services (agent, api, web)
+# run on the host with `make agent` / `make api` / `make web` for fast reloads.
+#
+#   make up    -> start and wait until both are healthy
+#   make down  -> stop (data is kept in the named volumes)
+
+name: voice-receptionist
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-receptionist}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-receptionist}
+      POSTGRES_DB: ${POSTGRES_DB:-receptionist}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"  # localhost only, never exposed on the LAN
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # $$ escapes compose interpolation, so the container's own env vars are used.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]  # persist locks/queues across restarts
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
