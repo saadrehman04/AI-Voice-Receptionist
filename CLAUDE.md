@@ -48,6 +48,8 @@ Run from the repo root. `make help` lists everything.
 - `make agent`: voice agent on :7860 (`uv run --all-packages python -m receptionist_agent`); talk at http://localhost:7860/client. Must run as `python -m` (Pipecat's runner finds `bot` on `__main__`)
 - `make chat`: text chat with the receptionist (real LLM + tools, stub bookings; `ARGS="--tenant demo-workshop"`); needs GROQ_API_KEY
 - `make latency`: P50/P95 per stage from logs/turns.jsonl (`ARGS="--last 50"`)
+- `make bench`: latency benchmark, 20 utterances through the real pipeline per flag config -> docs/benchmarks/<date>.md (`ARGS="--configs piper clause"`, `--turns 2` for a smoke run, `--report-only`); needs GROQ_API_KEY, takes ~6 min per config
+- `make traces`: start Jaeger (UI http://localhost:16686); set `OTEL_ENABLED=true` for the agent to export spans
 - `make migrate`: apply Alembic migrations to DATABASE_URL (run after `make up`)
 - `make worker`: background worker for post-call summaries (Redis queue)
 - `make api`: FastAPI on 127.0.0.1:8000 with reload in dev (`receptionist-api`); docs at /docs

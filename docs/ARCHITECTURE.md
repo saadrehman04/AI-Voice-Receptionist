@@ -59,9 +59,11 @@ flowchart LR
 
   ```text
   transport.input -> STT -> caller language -> user aggregator -> LLM
-      -> reply language router -> TTS switcher (Kokoro | Piper Urdu) -> transport.output
-      -> assistant aggregator
+      -> [tool filler] [full-reply buffer] -> reply language router
+      -> TTS switcher (English voice | Urdu voice) -> transport.output -> assistant aggregator
   ```
+
+  The bracketed stages come from the latency flags (`speech_stage`, see below).
 
   The user aggregator decides when the caller has finished (VAD plus the Smart Turn v3 ONNX model on
   CPU) and adds the transcript to the shared `LLMContext`; the assistant aggregator records what the
@@ -82,6 +84,25 @@ flowchart LR
 - **Languages:** `CallerLanguageTracker` notes the caller's language from each transcript (Urdu or
   Hindi script -> Urdu); `ReplyLanguageRouter` holds each reply until its first letter shows its
   script, then switches the TTS (Urdu -> Piper `ur_PK`, else Kokoro) before any text is spoken.
+- **Latency (Phase 5, `latency.py`):** each feature is a flag so `make bench` can compare them
+  (D25-D28). `TTS_TEXT_CHUNKING=clause` lets a reply's first chunk end at a comma, so speech starts
+  before the first sentence is finished. `ToolFiller` says "One moment." if a tool call runs past
+  `FILLER_AFTER_MS` with nothing said yet, and keeps it out of the LLM context. Connections are
+  pre-warmed at call start. Short yes/no turns go to a smaller model first (`llm_fallback`). The
+  api caches availability for 30 s; holds and the pre-write re-check never use the cache.
+- **Voices:** `TTS_PROVIDER` picks the English voice (Kokoro, Piper or Azure) and
+  `URDU_TTS_PROVIDER` the Urdu one (Piper or Azure; `auto` follows Azure). Pipecat's Azure service
+  streams with word timestamps (D30).
+- **Barge-in:** Pipecat's VAD turn-start strategy interrupts the reply when the caller talks; the
+  output transport drops queued audio, and the assistant aggregator keeps only sentences whose
+  audio was played (`test_barge_in.py` checks this without models; the benchmark with them).
+- **Benchmark (`bench/`, `make bench`):** 20 caller utterances (synthetic voices, or recordings
+  in `data/bench/recorded/`) are played in real time through the real pipeline over a fake
+  transport (`ReplayTransport`). Time zero is the true end of the caller's speech. Writes
+  `docs/benchmarks/<date>.md`.
+- **Tracing:** with `OTEL_ENABLED=true`, Pipecat's conversation/turn/service spans plus ours
+  (`tool <name>`, `turn latency` with an event per stage) go over OTLP/HTTP to Jaeger
+  (`make traces`, UI :16686).
 - **Logging:** loguru everywhere (Pipecat uses it too), one JSON object per line, with `call_id` and
   `turn_id` at the top level (see `receptionist_shared.logging`).
 - **A booking:** the LLM calls `check_availability`; the agent's `ApiBackend` asks the api, which
@@ -131,3 +152,4 @@ flowchart LR
 | web | 3000 |
 | Postgres | 5432 (localhost only) |
 | Redis | 6379 (localhost only) |
+| Jaeger UI / OTLP (optional, `make traces`) | 16686 / 4318 (localhost only) |

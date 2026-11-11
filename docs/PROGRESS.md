@@ -7,7 +7,7 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - [x] Phase 2: The receptionist brain
 - [ ] Phase 3: Real tools and safe booking
 - [ ] Phase 4: Backend, multi-tenancy and call records
-- [ ] Phase 5: Latency and barge-in
+- [x] Phase 5: Latency and barge-in
 - [ ] Phase 6: Simulated-caller eval suite
 - [ ] Phase 7: Owner dashboard and onboarding
 - [ ] Phase 8: WhatsApp calling
@@ -59,3 +59,17 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - Verified: isolation tests (two tenants via real onboarding, every cross-tenant read/write refused);
   system test agent -> api -> Postgres -> queue -> worker -> dashboard; real api + worker processes.
 - Open: a real voice test call end to end (GROQ_API_KEY); summaries use the heuristic until then.
+
+### Phase 5 (latency, barge-in): done 2026-11-11
+- Built: `make bench` (20 utterances through the real pipeline over a fake transport, P50/P95 per
+  stage per flag config); flags for first-clause TTS chunking, tool fillers, pre-warm,
+  simple-turn routing, VAD stop and a longer pause after asking for a number; 30 s availability
+  cache; OpenTelemetry spans + Jaeger (`make traces`); optional Azure voices (D30).
+- Measured ([findings](benchmarks/2026-11-11-findings.md)): Kokoro -> Piper saves ~1.5 s; best
+  path ~1.8-2.0 s from caller stop to agent audio (goal < 1 s not met on free tiers: STT ~0.6 s,
+  LLM ~0.7 s, TTS ~0.3 s). Barge-in: audio stops 12-37 ms after the interruption, context keeps
+  only what was played (`test_barge_in.py` in CI).
+- Found and fixed: Groq STT failed without a language; Kokoro dropped long sentences; phone
+  numbers were cut at the first pause; Groq's 200k tokens/day cap (D31).
+- Open: pre-warm and routing need a re-run on a fresh Groq day; Azure voices need the owner's key.
+

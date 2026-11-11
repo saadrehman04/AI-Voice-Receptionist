@@ -249,3 +249,99 @@ Short entries, newest last: what we decided, why, and what else we considered.
   This applies to book, reschedule and cancel.
 - **Alternatives:** prompt wording only (the model ignored it); one tool call per LLM response
   (hurts normal multi-tool turns).
+
+## D25. Fixes the first end-to-end voice runs found (Phase 5)
+- **Decision:** `AutoLanguageGroqSTTService` leaves `language` out of the Whisper request when
+  `STT_LANGUAGE` is unset; Kokoro gets a 12 s "no audio yet" timeout instead of Pipecat's 3 s;
+  `lookup_business_info` results carry `ok: true`.
+- **Why:** Pipecat 1.15's Groq STT asserts a language and defaults to English, so with
+  auto-detect every transcription failed, and forcing English would garble Urdu callers. Kokoro
+  synthesises a whole sentence before sending audio, at about real time on this CPU, so any
+  sentence over ~3 s was dropped as "no audio" (the greeting among them). Lookups without `ok`
+  were logged as failed tool calls in call records. None of this showed in unit tests with
+  fakes; the benchmark runs the real services, which is why it exists.
+- **Alternatives:** fixing the language per tenant (breaks mixed Urdu/English callers);
+  shorter sentences for Kokoro (the prompt can't guarantee length).
+
+## D26. Short yes/no turns try a smaller model first (Phase 5)
+- **Decision:** when the caller's latest message is at most five words, all from a small
+  yes/no/thanks vocabulary (English and Urdu), the fallback transport tries
+  `LLM_SIMPLE_TURN_MODEL` (gpt-oss-20b) first for that turn, tool follow-ups included.
+- **Why:** these turns need no reasoning ("Yes, that's right" -> confirm the read-back), and
+  the smaller model answers faster. Using it also saves the main model's per-minute token
+  budget for the turns that need it. It's safe because the booking rules are enforced in code
+  (D11, D24), not by the model.
+- **Alternatives:** an LLM classifier to decide (costs a request to save one); routing by
+  intent from CallState (the state lags the turn by one).
+
+## D27. Availability is cached for 30 s, without weakening booking safety (Phase 5)
+- **Decision:** the api caches the calendar + DB busy times per tenant and day for
+  `AVAILABILITY_CACHE_SECS`. Holds are always read live, every write clears the tenant's
+  cache, and the re-check right before a write never uses the cache.
+- **Why:** a caller asking "what about Thursday? Friday?" shouldn't wait for Google Calendar
+  each time. A stale entry can at worst offer a slot that the write then refuses with
+  alternatives (tested: the owner blocks a slot in the calendar, the cache still offers it,
+  the booking is refused).
+- **Alternatives:** no cache (slower, simpler); invalidation by Google push notifications
+  (needs a public webhook; later, with Phase 8's public endpoint).
+
+## D28. Traces: Pipecat's OpenTelemetry spans + ours, viewed in Jaeger (Phase 5)
+- **Decision:** `OTEL_ENABLED=true` turns on Pipecat's spans (conversation > turn > STT / LLM /
+  TTS) and ours (`tool <name>`, and `turn latency` with an event per stage), exported over
+  OTLP/HTTP. `make traces` starts Jaeger 2.22 (docker-compose profile, in-memory) at :16686.
+- **Why:** a trace shows one slow turn end to end, which P50/P95 tables can't. Jaeger is one
+  container. The guide's optional Langfuse needs Postgres + ClickHouse + Redis, too heavy for
+  this laptop just to look at spans. With tracing off, the OpenTelemetry API is a no-op.
+- **Alternatives:** Langfuse (LLM-centric views, heavy); logs only (no span tree).
+
+## D29. Evals: an LLM caller against the real brain, scored on state (Phase 6)
+- **Decision:** each scenario (YAML: tenant, frozen clock, persona, goal, facts, seeded
+  bookings, expectations) runs the real agent (prompt, tools, `CallState`, LLM fallback) against
+  a simulated caller LLM, in text (`TextSession`) or as speech (`--audio`, the benchmark's
+  replay transport). Scorers check the backend's final state, the tool calls and the
+  transcript. A Gemini judge with a strict rubric looks for invented facts, alongside a rule
+  check that every price-like number comes from the tenant's facts.
+- **Why:** an agent can say "you're booked" without booking, so we score what happened, not
+  what was said. The caller and judge run Gemini first, so they don't use up the agent's Groq
+  budget. A frozen clock and seeded bookings make "next Saturday" and "slot full" the same on
+  every run.
+- **CI:** `.github/workflows/evals.yml` runs the 15-scenario `ci` subset on agent PRs with one
+  retry for failed scenarios, and fails if booking accuracy drops more than 2 points below
+  `evals/baseline.json`. One scenario is about 7 points of the subset, so in practice any new
+  booking failure that survives a retry blocks the PR. It needs the API keys as repository
+  secrets; without them the job skips with a notice.
+- **Alternatives:** scripted callers (no variety, can't handle a clarifying question);
+  recorded LLM replies (deterministic and free, but any prompt change invalidates them, which
+  is exactly when the evals must run live); judging the outcome with the LLM (it can be fooled
+  the same way the agent can).
+
+## D30. Azure AI Speech as an optional voice for English and Urdu (Phase 5)
+- **Decision:** `TTS_PROVIDER=azure` speaks English with `AZURE_VOICE_EN` (default
+  en-US-JennyNeural). `URDU_TTS_PROVIDER=auto` then also uses Azure for Urdu
+  (`AZURE_VOICE_UR`, default ur-PK-UzmaNeural; ur-PK-AsadNeural is the male voice). Any mix
+  works, e.g. Piper English with Azure Urdu. Keys come only from `.env`.
+- **Why:** Piper's Urdu voice sounds robotic and Kokoro is too slow on this CPU (D25). Azure is
+  the one provider we found with natural Pakistani Urdu and English voices on a monthly free
+  tier (F0, about 0.5M characters). Its streaming TTS reports word timestamps, so barge-in can
+  keep exactly the words spoken. Chosen by the owner over Gemini Live (speech-to-speech),
+  which would have meant giving up per-stage control.
+- **Alternatives:** ElevenLabs (best English, Urdu not confirmed for its fast models); Cartesia
+  (low latency, Urdu added recently, paid); Google Cloud TTS ($300 trial credit, Urdu coverage
+  unclear); Uplift AI (Urdu specialist, not in our Pipecat version yet).
+
+## D31. Groq's free tier has a daily limit too; rate-limit state is shared per process (Phase 5)
+- **Decision:** the fallback keeps one `BudgetBook` per process, keyed by model and API key
+  (never the key itself), so every call learns from the others' 429s and token headers. It
+  models Groq's per-minute bucket as refilling continuously (rate = what's missing / time to
+  full), and counts tokens on unescaped text.
+- **Why (measured 2026-11-11):** besides 8k tokens/minute, Groq allows **200k tokens per day per
+  model** (`TPD`, reported in the 429). That's about 100 agent requests a day per model. During
+  the benchmark, gpt-oss-20b ran out, so three of the eight configs were answered almost
+  entirely by Gemini: at P50 that's 4.4 s to first text versus 0.7 s for gpt-oss-120b. Before
+  this fix each new call rediscovered an exhausted model with a wasted 429. It also skipped a
+  model until its bucket was completely full, and escaped Urdu counted six times its length.
+- **Consequence:** the free tier fits development and demos, not a busy line or a full eval run
+  (about 1.2M agent tokens). Groq's pay-as-you-go tier would cost cents for that; adopting it
+  is the owner's call (paid service).
+- **Alternatives:** per-call state (simple, but repeats every 429); waiting out `retry-after`
+  (dead air).
