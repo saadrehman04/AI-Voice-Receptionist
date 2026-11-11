@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 0 (scaffold). Boxes marked *(planned)* do not exist in code yet.
+Status: Phase 1 (browser voice loop). The api, tools and dashboard boxes are still planned.
 
 ## Big picture
 
@@ -52,8 +52,22 @@ flowchart LR
 
 - **Config:** every process reads `.env` through `receptionist_shared.get_settings()`. Secrets are
   `SecretStr`, so they show as `**********` if a Settings object is ever logged.
-- **A call (from Phase 1):** the browser sends audio over WebRTC to the agent. The agent streams it
-  through STT -> LLM -> TTS and streams audio back. Each turn logs stage timings.
+- **A call:** `make agent` starts Pipecat's runner on :7860. The browser client at `/client` POSTs
+  `/start`, then exchanges an SDP offer/answer, and audio flows peer-to-peer (aiortc). The runner calls
+  `receptionist_agent.bot.bot()` once per connection, which builds the services (in a thread, since
+  local models load slowly), wires the pipeline and runs it until the caller hangs up.
+
+  ```text
+  transport.input -> STT -> user aggregator -> LLM -> TTS -> transport.output -> assistant aggregator
+                            (Silero VAD + Smart Turn v3)
+  ```
+
+  The user aggregator decides when the caller has finished (VAD plus the Smart Turn v3 ONNX model on
+  CPU) and adds the transcript to the shared `LLMContext`; the assistant aggregator records what the
+  bot actually said. `TurnTimingObserver` watches frames from the side and writes one JSON line per
+  turn to `logs/turns.jsonl`.
+- **Logging:** loguru everywhere (Pipecat uses it too), one JSON object per line, with `call_id` and
+  `turn_id` at the top level (see `receptionist_shared.logging`).
 - **A booking (from Phase 3):** the LLM calls a tool, the agent calls the api, and the api locks the slot
   in Redis, re-checks Google Calendar, writes the event with an idempotency key, and stores it in Postgres.
 
