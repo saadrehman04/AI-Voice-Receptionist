@@ -50,6 +50,7 @@ from receptionist_agent.brain.prompt import build_system_prompt, greeting
 from receptionist_agent.brain.state import CallState
 from receptionist_agent.brain.tools import (
     ReceptionistTools,
+    SpokeObserver,
     ToolCallHook,
     register_tools,
     tools_schema,
@@ -200,7 +201,7 @@ def build_task(
     task = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=observers or [],
+        observers=[*(observers or []), SpokeObserver(call.state)],
         conversation_id=call.call_id,
         enable_tracing=call.tracing,
         additional_span_attributes={"tenant.slug": call.tenant.slug},

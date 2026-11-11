@@ -189,12 +189,12 @@ def build_azure_tts(settings: Settings, *, voice: str, language: str) -> TTSServ
             "Azure TTS is selected but AZURE_SPEECH_REGION is not set (e.g. eastus). "
             "It is shown next to the key in the Azure portal."
         )
-    from pipecat.services.azure.tts import AzureTTSService
+    from receptionist_agent.azure_tts import QuickStopAzureTTSService
 
-    return AzureTTSService(
+    return QuickStopAzureTTSService(
         api_key=key,
         region=settings.azure_speech_region,
-        settings=AzureTTSService.Settings(voice=voice, language=language),
+        settings=QuickStopAzureTTSService.Settings(voice=voice, language=language),
     )
 
 

@@ -11,6 +11,7 @@ from receptionist_agent.brain.tools import (
     TOOL_NAMES,
     ReceptionistTools,
     count_caller_turns,
+    goodbye_line,
     last_caller_language,
 )
 from receptionist_shared.tenant import TenantConfig
@@ -386,3 +387,9 @@ async def test_unknown_tool_and_handler_crash_are_contained(
     result = await tools.run("check_availability", {})
     assert result["ok"] is False
     assert "take a message" in result["error"]
+
+
+def test_goodbye_line_follows_the_callers_language(salon: TenantConfig) -> None:
+    assert goodbye_line(salon, "en") == "Thank you for calling Noor Beauty Salon. Goodbye!"
+    assert goodbye_line(salon, "ur").startswith("نور بیوٹی سیلون")
+    assert goodbye_line(salon, None).endswith("Goodbye!")

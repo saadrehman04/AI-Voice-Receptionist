@@ -325,6 +325,11 @@ Short entries, newest last: what we decided, why, and what else we considered.
   tier (F0, about 0.5M characters). Its streaming TTS reports word timestamps, so barge-in can
   keep exactly the words spoken. Chosen by the owner over Gemini Live (speech-to-speech),
   which would have meant giving up per-stage control.
+- **Update (same day):** the owner chose Azure for both languages (`TTS_PROVIDER=azure` in their
+  `.env`; the code default stays local so the project runs without an Azure account). Pipecat's
+  Azure service waited for Azure's "stop" round trip before passing an interruption on, so the
+  agent kept talking ~0.4 s after being interrupted. `QuickStopAzureTTSService` stops in the
+  background: 47 ms, measured.
 - **Alternatives:** ElevenLabs (best English, Urdu not confirmed for its fast models); Cartesia
   (low latency, Urdu added recently, paid); Google Cloud TTS ($300 trial credit, Urdu coverage
   unclear); Uplift AI (Urdu specialist, not in our Pipecat version yet).

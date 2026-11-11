@@ -111,6 +111,17 @@ def test_mentions_are_case_insensitive_regexes(salon: TenantConfig) -> None:
     assert check_mentions(bad).passed is False
 
 
+def test_reply_language_follows_the_caller(salon: TenantConfig) -> None:
+    from receptionist_evals.scorers import check_reply_language
+
+    greeting = ("agent", "Hello, thank you for calling.")
+    english = run(scenario(), salon, transcript=[greeting, ("agent", "Yes, we accept JazzCash.")])
+    assert check_reply_language(english).passed is True
+    switched = run(scenario(), salon, transcript=[greeting, ("agent", "ہاں، ہم جاز کیش لیتے ہیں۔")])
+    check = check_reply_language(switched)
+    assert check.passed is False and "1/1" in check.detail
+
+
 def test_price_numbers_must_come_from_the_facts(salon: TenantConfig) -> None:
     s = scenario()
     real = run(s, salon, transcript=[("agent", "A haircut is 2,500 rupees and colour from 8,000.")])

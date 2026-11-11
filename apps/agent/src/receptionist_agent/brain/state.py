@@ -53,6 +53,7 @@ class CallState:
     pending: tuple[str, tuple[object, ...]] | None = None  # (action, details) awaiting a yes
     caller_turns: int = 0  # caller messages heard so far in this call
     pending_turn: int | None = None  # caller_turns when the read-back was given
+    agent_spoke: bool = False  # anything said since the caller last spoke (SpokeObserver)
 
     REQUIRED_FOR_BOOKING: ClassVar[tuple[str, ...]] = ("service", "start", "caller_name", "phone")
 

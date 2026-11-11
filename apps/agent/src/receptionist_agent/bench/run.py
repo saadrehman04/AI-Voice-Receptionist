@@ -209,6 +209,7 @@ class BenchCall:
     ) -> None:
         self.settings, self.tenant, self.label = settings, tenant, label
         self._backend, self._now, self._on_tool_call = backend, now, on_tool_call
+        self.dump_context_to: Path | None = None
         self.transport = ReplayTransport()
         self.targets_used: list[str] = []
         self.call: Call | None = None
@@ -248,6 +249,13 @@ class BenchCall:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        if self.dump_context_to is not None and self.context is not None:
+            # What the LLM saw, for debugging a run (e.g. why it answered in the wrong language).
+            self.dump_context_to.parent.mkdir(parents=True, exist_ok=True)
+            messages = self.context.get_messages()
+            self.dump_context_to.write_text(
+                json.dumps(messages, ensure_ascii=False, indent=1, default=str)
+            )
         if self._runner_task is not None and not self._runner_task.done():
             await self.task.cancel()
             try:
@@ -416,12 +424,16 @@ async def run_config(
     synth: Synth,
     max_turns: int | None = None,
     barge: bool = True,
+    calls: set[str] | None = None,
 ) -> None:
     scripts = yaml.safe_load(SCRIPTS.read_text())
     settings = Settings(**overrides)
     with out.open("a") as f:
         for call in scripts["calls"]:
+            if calls and call["id"] not in calls:
+                continue
             async with BenchCall(settings, scripts["tenant"], label=name) as bench:
+                bench.dump_context_to = DATA / "contexts" / f"{out.stem}-{call['id']}.json"
                 for turn in call["turns"][:max_turns]:
                     pcm = caller_audio(turn["id"], turn["text"], call["language"], DATA, synth)
                     result = await bench.turn(turn["id"], turn["kind"], call["language"], pcm)
@@ -459,6 +471,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--turns", type=int, default=None, help="max turns per call (smoke runs)")
     parser.add_argument("--no-barge-in", action="store_true")
+    parser.add_argument("--calls", nargs="*", help="only these scripted calls (en, ur)")
     args = parser.parse_args(argv)
     configure_logging("INFO", json_logs=False)
     from receptionist_agent.bench.report import write_report
@@ -479,6 +492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     synth=synth,
                     max_turns=args.turns,
                     barge=not args.no_barge_in,
+                    calls=set(args.calls) if args.calls else None,
                 )
             )
     path = write_report(results_dir, Path("docs/benchmarks"), configs=CONFIGS)

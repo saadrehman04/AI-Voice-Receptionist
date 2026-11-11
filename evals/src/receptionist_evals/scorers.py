@@ -9,6 +9,9 @@ none of its applicable checks fail.
 - slots_free / no_new_booking: nothing was booked where it shouldn't be.
 - no_double_booking: no two confirmed bookings overlap (with the tenant's buffer), ever.
 - tools / mentions: required and forbidden tool calls and phrases.
+- reply_language: the agent answers in the caller's language (English callers get Latin script,
+  Urdu callers Urdu script; mixed callers may get either). Seen live: English questions
+  answered in Urdu.
 - price_numbers: every price-like number the agent said comes from the tenant's facts (a rule
   check; the LLM judge covers numbers said as words).
 - judge: Gemini, strict rubric: statements not supported by the facts or tool results.
@@ -23,6 +26,7 @@ from datetime import timedelta
 from typing import Any
 
 from receptionist_agent.brain.backend import Booking
+from receptionist_agent.language import caller_language
 from receptionist_evals.llm import EvalLLM, EvalLLMError
 from receptionist_evals.runner import CallRun
 from receptionist_shared.api_models import BookingStatus
@@ -144,6 +148,18 @@ def check_mentions(run: CallRun) -> Check:
     return Check("mentions", not parts, "; ".join(parts))
 
 
+def check_reply_language(run: CallRun) -> Check:
+    want = {"en": "en", "ur": "ur"}.get(run.scenario.language)
+    if want is None:
+        return Check("reply_language", None)
+    replies = [text for speaker, text in run.transcript[1:] if speaker == "agent" and text.strip()]
+    wrong = [text for text in replies if caller_language(text) not in (want, None)]
+    detail = (
+        f"{len(wrong)}/{len(replies)} replies not in {want}: {wrong[0][:60]!r}" if wrong else ""
+    )
+    return Check("reply_language", not wrong, detail)
+
+
 PHONE = re.compile(r"\+?\d[\d \-]{7,}\d")
 NUMBER = re.compile(r"(?<![\w.])\d{1,3}(?:,\d{3})+(?![\w])|(?<![\w.,])\d+(?![\w,])")
 MIN_PRICE = 100  # smaller numbers are times, durations, counts
@@ -226,5 +242,6 @@ def rule_checks(run: CallRun) -> list[Check]:
         check_no_double_booking(run),
         check_tools(run),
         check_mentions(run),
+        check_reply_language(run),
         check_price_numbers(run),
     ]

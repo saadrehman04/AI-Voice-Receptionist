@@ -18,7 +18,15 @@ from typing import Any
 from loguru import logger
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import EndWorkerFrame, FunctionCallResultProperties
+from pipecat.frames.frames import (
+    EndWorkerFrame,
+    FunctionCallResultProperties,
+    LLMMessagesAppendFrame,
+    LLMTextFrame,
+    TTSSpeakFrame,
+    UserStoppedSpeakingFrame,
+)
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
@@ -632,6 +640,33 @@ def last_caller_language(context: LLMContext | None) -> str | None:
     return None
 
 
+class SpokeObserver(BaseObserver):
+    """Keeps `CallState.agent_spoke`: has the agent said anything since the caller last spoke?
+
+    An observer sees each frame when it is pushed. The LLM pushes its text before it runs any
+    tool, so by the time `end_call` runs this is up to date. (The LLM context isn't: it gets
+    the reply's text only once the reply has finished.)
+    """
+
+    def __init__(self, state: CallState) -> None:
+        super().__init__()
+        self._state = state
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        frame = data.frame
+        if isinstance(frame, UserStoppedSpeakingFrame | LLMMessagesAppendFrame):
+            self._state.agent_spoke = False  # a new caller turn (voice | text mode)
+        elif isinstance(frame, LLMTextFrame | TTSSpeakFrame) and frame.text.strip():
+            self._state.agent_spoke = True
+
+
+def goodbye_line(tenant: TenantConfig, language: str | None) -> str:
+    if language == "ur":
+        name = tenant.business_name_ur or tenant.business_name
+        return f"{name} میں فون کرنے کا شکریہ۔ خدا حافظ!"
+    return f"Thank you for calling {tenant.business_name}. Goodbye!"
+
+
 def register_tools(llm: LLMService[Any], tools: ReceptionistTools) -> None:
     """Route every tool call from `llm` to `tools`. `end_call` also ends the pipeline."""
 
@@ -644,11 +679,15 @@ def register_tools(llm: LLMService[Any], tools: ReceptionistTools) -> None:
                 caller_language=last_caller_language(params.context),
             )
             if name == "end_call" and result.get("ended"):
-                # The goodbye was already said; don't ask the LLM for more, just hang up
-                # once queued audio has played (EndWorkerFrame flushes frames ahead of it).
+                # Don't ask the LLM for more, just hang up once queued audio has played
+                # (EndWorkerFrame flushes frames ahead of it). Never hang up in silence: seen
+                # live, a model ended the call on "Great, thank you" without a word.
                 await params.result_callback(
                     result, properties=FunctionCallResultProperties(run_llm=False)
                 )
+                if not tools.state.agent_spoke:
+                    goodbye = goodbye_line(tools.tenant, tools.state.language)
+                    await params.llm.push_frame(TTSSpeakFrame(goodbye))
                 await params.llm.push_frame(EndWorkerFrame(reason="end_call"))
                 return
             await params.result_callback(result)

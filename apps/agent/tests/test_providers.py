@@ -213,9 +213,9 @@ def test_kokoro_gets_a_quiet_timeout_longer_than_its_synthesis_time(
 
 @pytest.fixture
 def azure(monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]) -> type[Recorder]:
-    import pipecat.services.azure.tts as azure_mod
+    import receptionist_agent.azure_tts as azure_mod
 
-    monkeypatch.setattr(azure_mod, "AzureTTSService", recorder)
+    monkeypatch.setattr(azure_mod, "QuickStopAzureTTSService", recorder)
     return recorder
 
 
@@ -267,4 +267,4 @@ def test_describe_shows_the_urdu_voice_provider_without_the_key() -> None:
 def test_real_azure_service_builds_offline() -> None:
     """The real class constructs without a network call (it connects when the call starts)."""
     tts = build_tts(az(tts_provider="azure"))
-    assert type(tts).__name__ == "AzureTTSService"
+    assert type(tts).__name__ == "QuickStopAzureTTSService"

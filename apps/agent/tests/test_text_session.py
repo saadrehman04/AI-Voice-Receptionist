@@ -145,3 +145,36 @@ async def test_llm_cannot_confirm_without_hearing_the_caller(
     assert "not answered yet" in reply.tool_calls[-1].result["error"]
     assert reply.text == "refused"
     assert backend.bookings == {}
+
+
+async def test_hanging_up_in_silence_gets_a_goodbye(
+    salon: TenantConfig, monday_9am: datetime
+) -> None:
+    """Seen live: a model called end_call on "Great, thank you" without saying a word."""
+
+    def script(messages: Sequence[dict[str, Any]]) -> Step:
+        return CallTools([("end_call", {"reason": "caller finished"})])  # no text at all
+
+    state = CallState()
+    tools = ReceptionistTools(
+        salon, state, InMemoryBackend(), call_id="t-4", clock=lambda: monday_9am
+    )
+    async with TextSession(tenant=salon, llm=ScriptedLLM(script), tools=tools, state=state) as s:
+        reply = await s.send("Great, thank you.")
+    assert reply.ended
+    assert reply.text == "Thank you for calling Noor Beauty Salon. Goodbye!"
+
+
+async def test_no_second_goodbye_when_the_agent_already_said_one(
+    salon: TenantConfig, monday_9am: datetime
+) -> None:
+    def script(messages: Sequence[dict[str, Any]]) -> Step:
+        return CallTools([("end_call", {"reason": "bye"})], text="Goodbye, Sara!")
+
+    state = CallState()
+    tools = ReceptionistTools(
+        salon, state, InMemoryBackend(), call_id="t-5", clock=lambda: monday_9am
+    )
+    async with TextSession(tenant=salon, llm=ScriptedLLM(script), tools=tools, state=state) as s:
+        reply = await s.send("Bye!")
+    assert reply.text == "Goodbye, Sara!"

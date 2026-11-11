@@ -27,6 +27,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMMessagesAppendFrame,
     LLMTextFrame,
+    TTSSpeakFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
@@ -38,7 +39,12 @@ from pipecat.workers.runner import WorkerRunner
 
 from receptionist_agent.brain.prompt import greeting
 from receptionist_agent.brain.state import CallState
-from receptionist_agent.brain.tools import ReceptionistTools, register_tools, tools_schema
+from receptionist_agent.brain.tools import (
+    ReceptionistTools,
+    SpokeObserver,
+    register_tools,
+    tools_schema,
+)
 from receptionist_shared.tenant import TenantConfig
 
 SETTLE_SECS = 0.15  # quiet time after the last event before we call the turn finished
@@ -103,6 +109,8 @@ class ReplyCollector(FrameProcessor):
             self._saw_response = True
         elif isinstance(frame, LLMTextFrame):
             self._text.append(frame.text)
+        elif isinstance(frame, TTSSpeakFrame):  # spoken without the LLM, e.g. a goodbye
+            self._text.append((" " if self._text else "") + frame.text)
         elif isinstance(frame, FunctionCallsStartedFrame):
             self._cancel_settle()
             self._pending_calls += len(frame.function_calls)
@@ -147,6 +155,7 @@ class TextSession:
         self._worker = PipelineWorker(
             Pipeline([aggregators.user(), llm, self._collector, aggregators.assistant()]),
             cancel_on_idle_timeout=False,
+            observers=[SpokeObserver(state)],
         )
         self._runner = WorkerRunner(handle_sigint=False)
         self._run_task: asyncio.Task[None] | None = None
