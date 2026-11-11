@@ -106,8 +106,20 @@ will change, and only act after a clear yes.
 """
 
 
-def greeting(tenant: TenantConfig) -> str:
-    """The first thing the caller hears, in the tenant's default language."""
-    if tenant.default_language == "ur" and tenant.greeting.ur:
-        return tenant.greeting.ur
-    return tenant.greeting.en
+DISCLOSURE = {
+    "en": "This call may be recorded, and you are speaking with an AI assistant.",
+    "ur": "یہ کال ریکارڈ ہو سکتی ہے، اور آپ ایک اے آئی اسسٹنٹ سے بات کر رہے ہیں۔",
+}
+
+
+def greeting(tenant: TenantConfig, *, recording: bool = False) -> str:
+    """The first thing the caller hears, in the tenant's default language.
+
+    When calls are recorded, the greeting starts with a disclosure that the call may be recorded
+    and that the caller is speaking with an AI.
+    """
+    urdu = tenant.default_language == "ur" and tenant.greeting.ur
+    text = tenant.greeting.ur if urdu and tenant.greeting.ur else tenant.greeting.en
+    if recording:
+        text = f"{DISCLOSURE['ur' if urdu else 'en']} {text}"
+    return text

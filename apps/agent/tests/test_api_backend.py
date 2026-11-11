@@ -71,3 +71,61 @@ async def test_api_down_becomes_a_spoken_fallback(
     result = await tools.run("check_availability", {"service": "Haircut", "date": "2026-11-18"})
     assert result["ok"] is False
     assert "take a message" in result["error"]
+
+
+async def test_call_is_recorded_and_summarised_end_to_end(
+    api: httpx.AsyncClient, salon: TenantConfig, monday_9am: datetime, resources: object
+) -> None:
+    """Agent tools + recorder -> api -> Postgres -> job queue -> worker -> owner dashboard."""
+    from receptionist_agent.records import ApiCallRecorder
+    from receptionist_api.main import Resources
+    from receptionist_api.summary import HeuristicSummarizer
+    from receptionist_api.worker import make_handlers
+
+    assert isinstance(resources, Resources)
+    backend = ApiBackend("http://api", TOKEN, client=api)
+
+    async def send(path: str, body: dict[str, object]) -> None:
+        await backend.record(salon, path, body)
+
+    recorder = ApiCallRecorder("e2e-call", send)
+
+    def on_tool(name: str, args: dict, result: dict, ok: bool, ms: int) -> None:  # type: ignore[type-arg]
+        recorder.tool_call(name, args, result, ok=ok, duration_ms=ms)
+
+    tools = ReceptionistTools(
+        salon,
+        CallState(),
+        backend,
+        call_id="e2e-call",
+        clock=lambda: monday_9am,
+        on_tool_call=on_tool,
+    )
+    await recorder.start()
+    recorder.agent_turn("Hello, Noor Beauty Salon.", interrupted=False)
+    recorder.caller_turn("Can I leave a message for Ayesha?")
+    await tools.run("take_message", {"message": "Call me about bridal", "phone": "03001234567"})
+    recorder.timing({"stages": {"total": 700.0}})
+    recorder.agent_turn("Done, she will call you back.", interrupted=False)
+    await recorder.end(language="en", recording_path=None)
+
+    handlers = make_handlers(resources.bookings._sessions, resources.calls, HeuristicSummarizer())
+    assert await resources.queue.run_one(handlers, wait_secs=1)
+
+    onboard = await api.post(
+        "/v1/onboarding",
+        json={
+            "tenant": {**salon.model_dump(mode="json"), "slug": "other-salon"},
+            "owner_email": "o@example.com",
+            "password": "a-long-enough-password",
+        },
+    )
+    assert onboard.status_code == 201
+    tenant_id = resources.tenants.id_of("demo-salon")
+    assert tenant_id is not None
+    (call,) = await resources.calls.list_calls(tenant_id)
+    detail = await resources.calls.detail(tenant_id, call.id)
+    assert call.outcome == "message"
+    assert [t.speaker for t in detail.turns] == ["agent", "caller", "agent"]
+    assert detail.turns[2].timings == {"total": 700.0}
+    assert detail.tool_calls[0].name == "take_message"

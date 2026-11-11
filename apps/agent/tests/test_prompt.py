@@ -39,3 +39,11 @@ def test_handoff_phone_not_in_prompt(salon: TenantConfig, monday_9am: datetime) 
 def test_greeting_uses_default_language(salon: TenantConfig, workshop: TenantConfig) -> None:
     assert greeting(salon).startswith("Hello, thank you for calling Noor Beauty Salon")
     assert greeting(workshop).startswith("السلام علیکم")
+
+
+def test_recording_disclosure_comes_first(salon: TenantConfig, workshop: TenantConfig) -> None:
+    assert greeting(salon, recording=True).startswith(
+        "This call may be recorded, and you are speaking with an AI assistant."
+    )
+    assert greeting(workshop, recording=True).startswith("یہ کال ریکارڈ ہو سکتی ہے")
+    assert "recorded" not in greeting(salon)

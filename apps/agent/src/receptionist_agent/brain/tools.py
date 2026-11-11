@@ -10,6 +10,7 @@ enforces the read-back-then-confirm rule.
 
 from __future__ import annotations
 
+import time as time_module
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date, datetime, time
 from typing import Any
@@ -36,6 +37,8 @@ from receptionist_shared.tenant import Service, TenantConfig
 ToolResult = dict[str, Any]
 Handler = Callable[[Mapping[str, Any]], Awaitable[ToolResult]]
 Clock = Callable[[], datetime]
+# (name, arguments, result, ok, duration_ms): used to record tool calls on the call record.
+ToolCallHook = Callable[[str, dict[str, Any], ToolResult, bool, int], None]
 
 
 def _err(message: str, **extra: Any) -> ToolResult:
@@ -175,12 +178,14 @@ class ReceptionistTools:
         *,
         call_id: str,
         clock: Clock | None = None,
+        on_tool_call: ToolCallHook | None = None,
     ) -> None:
         self.tenant = tenant
         self.state = state
         self.backend = backend
         self.call_id = call_id
         self._clock = clock or tenant.now
+        self._on_tool_call = on_tool_call
         self.handlers: dict[str, Handler] = {
             "check_availability": self.check_availability,
             "create_booking": self.create_booking,
@@ -519,11 +524,17 @@ class ReceptionistTools:
         handler = self.handlers.get(name)
         if handler is None:
             return _err(f"unknown tool {name!r}")
+        started = time_module.perf_counter()
         try:
             result = await handler(args)
-        except Exception as exc:  # a tool bug must not kill the call
+        except Exception as exc:  # a tool bug or a down api must not kill the call
             logger.exception("tool failed", tool=name)
-            return _err(f"{type(exc).__name__}: the system had a problem; offer to take a message")
+            result = _err(
+                f"{type(exc).__name__}: the system had a problem; offer to take a message"
+            )
+        duration_ms = int((time_module.perf_counter() - started) * 1000)
+        if self._on_tool_call is not None:
+            self._on_tool_call(name, dict(args), result, bool(result.get("ok")), duration_ms)
         # Log the outcome without caller name or phone number (no PII in logs).
         logger.info(
             "tool call",

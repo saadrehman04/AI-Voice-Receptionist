@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -47,6 +48,12 @@ from receptionist_agent.brain.state import CallState
 from receptionist_agent.brain.tools import ReceptionistTools, register_tools, tools_schema
 from receptionist_agent.language import CallerLanguageTracker, ReplyLanguageRouter
 from receptionist_agent.providers import Services, build_services, describe_providers
+from receptionist_agent.records import (
+    ApiCallRecorder,
+    CallRecorder,
+    MemoryRecorder,
+    write_wav,
+)
 from receptionist_agent.timing import JsonlTurnWriter, TurnTimingObserver
 from receptionist_shared import Settings, get_settings
 from receptionist_shared.tenant import TenantConfig, load_tenant_by_slug
@@ -78,6 +85,20 @@ class Call:
     state: CallState
     tools: ReceptionistTools
     services: Services
+    recorder: CallRecorder = field(default_factory=lambda: MemoryRecorder("unknown"))
+    recording: AudioBufferProcessor | None = None
+    recording_path: Path | None = None
+
+
+def make_recorder(call_id: str, tenant: TenantConfig, backend: BookingBackend) -> CallRecorder:
+    """Records go to the api when we have one; otherwise they stay in memory."""
+    if isinstance(backend, ApiBackend):
+
+        async def send(path: str, body: dict[str, Any]) -> None:
+            await backend.record(tenant, path, body)
+
+        return ApiCallRecorder(call_id, send)
+    return MemoryRecorder(call_id)
 
 
 def tts_stage(services: Services) -> list[FrameProcessor]:
@@ -106,16 +127,29 @@ def build_task(
     def remember_language(language: str) -> None:
         call.state.language = language
 
+    async def on_user_turn(_agg: Any, _strategy: Any, message: Any) -> None:
+        call.recorder.caller_turn(getattr(message, "content", None) or "")
+
+    async def on_assistant_turn(_agg: Any, message: Any) -> None:
+        call.recorder.agent_turn(
+            getattr(message, "content", "") or "", interrupted=bool(message.interrupted)
+        )
+
+    user, assistant = aggregators.user(), aggregators.assistant()
+    user.add_event_handler("on_user_turn_stopped", on_user_turn)
+    assistant.add_event_handler("on_assistant_turn_stopped", on_assistant_turn)
+
     pipeline = Pipeline(
         [
             transport.input(),
             call.services.stt,
             CallerLanguageTracker(remember_language),
-            aggregators.user(),
+            user,
             call.services.llm,
             *tts_stage(call.services),
             transport.output(),
-            aggregators.assistant(),
+            *([call.recording] if call.recording is not None else []),
+            assistant,
         ]
     )
     task = PipelineWorker(
@@ -134,13 +168,51 @@ def prepare_call(
     tenant_slug: str | None = None,
     backend: BookingBackend | None = None,
 ) -> Call:
-    """Blocking setup for one call (loads YAML and local models). Run it in a thread."""
-    tenant = load_tenant_by_slug(tenant_slug or settings.default_tenant, Path(settings.tenants_dir))
+    """Blocking setup for one call (loads the tenant and local models). Run it in a thread."""
+    backend = backend or default_backend(settings)
+    tenant = load_tenant(settings, tenant_slug or settings.default_tenant, backend)
     prompt = build_system_prompt(tenant, tenant.now())
     services = build_services(settings, prompt, urdu="ur" in tenant.languages)
     state = CallState()
-    tools = ReceptionistTools(tenant, state, backend or default_backend(settings), call_id=call_id)
-    return Call(call_id=call_id, tenant=tenant, state=state, tools=tools, services=services)
+    recorder = make_recorder(call_id, tenant, backend)
+
+    def record_tool(
+        name: str, args: dict[str, Any], result: dict[str, Any], ok: bool, duration_ms: int
+    ) -> None:
+        recorder.tool_call(name, args, result, ok=ok, duration_ms=duration_ms)
+
+    tools = ReceptionistTools(tenant, state, backend, call_id=call_id, on_tool_call=record_tool)
+    call = Call(
+        call_id=call_id,
+        tenant=tenant,
+        state=state,
+        tools=tools,
+        services=services,
+        recorder=recorder,
+    )
+    if settings.record_calls:
+        # Stereo: caller on the left channel, agent on the right. Written once at hang-up.
+        call.recording = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
+        call.recording_path = Path(settings.storage_dir) / tenant.slug / f"{call_id}.wav"
+    return call
+
+
+def load_tenant(settings: Settings, slug: str, backend: BookingBackend) -> TenantConfig:
+    """From the api when we have one (tenants can be created there); else from YAML."""
+    if isinstance(backend, ApiBackend):
+        return asyncio.run(_fetch_tenant(settings, slug))
+    return load_tenant_by_slug(slug, Path(settings.tenants_dir))
+
+
+async def _fetch_tenant(settings: Settings, slug: str) -> TenantConfig:
+    # A short-lived client: this runs in prepare_call's worker thread, with its own event loop.
+    if settings.agent_api_token is None:
+        raise RuntimeError("BOOKING_BACKEND=api needs AGENT_API_TOKEN")
+    api = ApiBackend(settings.api_base_url, settings.agent_api_token.get_secret_value())
+    try:
+        return await api.tenant_config(slug)
+    finally:
+        await api.aclose()
 
 
 async def run_bot(
@@ -159,12 +231,29 @@ async def run_bot(
             prepare_call, settings, call_id=call_id, tenant_slug=tenant_slug
         )
         writer = JsonlTurnWriter(Path(settings.turns_log_path))
-        timing = TurnTimingObserver(call_id=call_id, on_turn=writer.write)
+
+        async def on_turn_timing(record: dict[str, Any]) -> None:
+            await writer.write(record)
+            call.recorder.timing(record)
+
+        timing = TurnTimingObserver(call_id=call_id, on_turn=on_turn_timing)
         task, _context = build_task(transport, call, observers=[timing])
+        saved_recording: list[Path] = []
+        if call.recording is not None and call.recording_path is not None:
+            path = call.recording_path
+
+            async def on_audio(_buf: Any, audio: bytes, sample_rate: int, channels: int) -> None:
+                await asyncio.to_thread(write_wav, path, audio, sample_rate, channels)
+                saved_recording.append(path)
+
+            call.recording.add_event_handler("on_audio_data", on_audio)
+
+        await call.recorder.start()
 
         async def on_client_connected(_transport: BaseTransport, _client: Any) -> None:
             logger.info("caller connected", tenant=call.tenant.slug)
-            await task.queue_frames([TTSSpeakFrame(greeting(call.tenant))])
+            hello = greeting(call.tenant, recording=call.recording is not None)
+            await task.queue_frames([TTSSpeakFrame(hello)])
 
         async def on_client_disconnected(_transport: BaseTransport, _client: Any) -> None:
             logger.info("caller disconnected")
@@ -175,8 +264,14 @@ async def run_bot(
 
         runner = WorkerRunner(handle_sigint=handle_sigint)
         await runner.add_workers(task)
-        await runner.run()
-        logger.info("call ended", outcome=call.state.intent.value, booked=call.state.booking_id)
+        try:
+            await runner.run()
+        finally:
+            await call.recorder.end(
+                language=call.state.language,
+                recording_path=str(saved_recording[0]) if saved_recording else None,
+            )
+            logger.info("call ended", intent=call.state.intent.value, booked=call.state.booking_id)
 
 
 def webrtc_transport(runner_args: SmallWebRTCRunnerArguments) -> SmallWebRTCTransport:

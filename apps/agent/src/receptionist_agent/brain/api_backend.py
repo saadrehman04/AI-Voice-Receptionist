@@ -66,13 +66,13 @@ class ApiBackend:
     async def _call(
         self,
         method: str,
-        tenant: TenantConfig,
+        slug: str,
         path: str,
         *,
         json: Any = None,
         params: dict[str, str] | None = None,
     ) -> Any:
-        url = f"/v1/tenants/{tenant.slug}{path}"
+        url = f"/v1/tenants/{slug}{path}"
         try:
             response = await self._client.request(
                 method, url, json=json, params=params, headers=self._headers
@@ -104,7 +104,9 @@ class ApiBackend:
         req = AvailabilityRequest(
             service=service, day=day, preferred_time=preferred, call_id=call_id
         )
-        data = await self._call("POST", tenant, "/availability", json=req.model_dump(mode="json"))
+        data = await self._call(
+            "POST", tenant.slug, "/availability", json=req.model_dump(mode="json")
+        )
         resp = AvailabilityResponse.model_validate(data)
         return Availability(
             resp.day, [o.astimezone(tenant.tz) for o in resp.options], resp.requested_day_available
@@ -114,7 +116,7 @@ class ApiBackend:
         self, tenant: TenantConfig, *, service: str, start: datetime, call_id: str
     ) -> bool:
         req = HoldRequest(service=service, start=start, call_id=call_id)
-        data = await self._call("POST", tenant, "/holds", json=req.model_dump(mode="json"))
+        data = await self._call("POST", tenant.slug, "/holds", json=req.model_dump(mode="json"))
         return HoldResponse.model_validate(data).held
 
     async def create_booking(
@@ -136,11 +138,11 @@ class ApiBackend:
             call_id=call_id,
             idempotency_key=idempotency_key,
         )
-        data = await self._call("POST", tenant, "/bookings", json=req.model_dump(mode="json"))
+        data = await self._call("POST", tenant.slug, "/bookings", json=req.model_dump(mode="json"))
         return BookingOut.model_validate(data)
 
     async def find_bookings(self, tenant: TenantConfig, phone: str) -> list[Booking]:
-        data = await self._call("GET", tenant, "/bookings", params={"phone": phone})
+        data = await self._call("GET", tenant.slug, "/bookings", params={"phone": phone})
         return _BOOKING_LIST.validate_python(data)
 
     async def reschedule_booking(
@@ -154,7 +156,10 @@ class ApiBackend:
     ) -> Booking:
         req = RescheduleRequest(start=start, call_id=call_id, idempotency_key=idempotency_key)
         data = await self._call(
-            "POST", tenant, f"/bookings/{booking_id}/reschedule", json=req.model_dump(mode="json")
+            "POST",
+            tenant.slug,
+            f"/bookings/{booking_id}/reschedule",
+            json=req.model_dump(mode="json"),
         )
         return BookingOut.model_validate(data)
 
@@ -163,7 +168,7 @@ class ApiBackend:
     ) -> Booking:
         req = CancelRequest(call_id=call_id)
         data = await self._call(
-            "POST", tenant, f"/bookings/{booking_id}/cancel", json=req.model_dump(mode="json")
+            "POST", tenant.slug, f"/bookings/{booking_id}/cancel", json=req.model_dump(mode="json")
         )
         return BookingOut.model_validate(data)
 
@@ -179,7 +184,7 @@ class ApiBackend:
         req = MessageCreate(
             kind=kind, body=body, caller_name=caller_name, phone=phone, call_id=call_id
         )
-        data = await self._call("POST", tenant, "/messages", json=req.model_dump(mode="json"))
+        data = await self._call("POST", tenant.slug, "/messages", json=req.model_dump(mode="json"))
         return MessageOut.model_validate(data).id
 
     async def take_message(
@@ -206,10 +211,17 @@ class ApiBackend:
     ) -> str:
         return await self._message(tenant, MessageKind.HANDOFF, reason, caller_name, phone, call_id)
 
+    async def record(self, tenant: TenantConfig, path: str, body: dict[str, Any]) -> None:
+        """Send one call record (see records.py). `path` is relative to /calls."""
+        await self._call("POST", tenant.slug, f"/calls{path}", json=body)
+
+    async def tenant_config(self, slug: str) -> TenantConfig:
+        return TenantConfig.model_validate(await self._call("GET", slug, "/config"))
+
     async def lookup(
         self, tenant: TenantConfig, question: str, *, language: str
     ) -> KnowledgeResult:
         req = LookupRequest(question=question, language=language)
-        data = await self._call("POST", tenant, "/knowledge/lookup", json=req.model_dump())
+        data = await self._call("POST", tenant.slug, "/knowledge/lookup", json=req.model_dump())
         resp = LookupResponse.model_validate(data)
         return KnowledgeResult(found=resp.found, answer=resp.answer, sources=resp.sources)
