@@ -105,6 +105,45 @@ class LookupResponse(_Model):
     sources: list[str] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------- call records (Phase 4)
+
+
+class Speaker(StrEnum):
+    CALLER = "caller"
+    AGENT = "agent"
+
+
+class CallStart(_Model):
+    call_id: str = Field(min_length=1, max_length=64)
+    channel: str = "webrtc"
+    caller_phone: str | None = None
+    started_at: AwareDatetime
+
+
+class TurnIn(_Model):
+    idx: int = Field(ge=0)
+    speaker: Speaker
+    text: str
+    interrupted: bool = False
+    timings: dict[str, float | None] | None = None  # stage -> ms (see TurnTimingObserver)
+    spoken_at: AwareDatetime
+
+
+class ToolCallIn(_Model):
+    name: str = Field(max_length=64)
+    arguments: dict[str, object]
+    result: dict[str, object]
+    ok: bool
+    duration_ms: int = Field(ge=0)
+    called_at: AwareDatetime
+
+
+class CallEnd(_Model):
+    ended_at: AwareDatetime
+    language: str | None = None
+    recording_path: str | None = None
+
+
 class ApiError(_Model):
     """Body of every 4xx the tool endpoints return; `code` is stable, `detail` is for humans."""
 
@@ -119,6 +158,8 @@ __all__ = [
     "BookingCreate",
     "BookingOut",
     "BookingStatus",
+    "CallEnd",
+    "CallStart",
     "CancelRequest",
     "HoldRequest",
     "HoldResponse",
@@ -128,4 +169,7 @@ __all__ = [
     "MessageKind",
     "MessageOut",
     "RescheduleRequest",
+    "Speaker",
+    "ToolCallIn",
+    "TurnIn",
 ]

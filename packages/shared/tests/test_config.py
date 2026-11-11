@@ -61,3 +61,9 @@ def test_env_example_parses(tmp_path: Path) -> None:
     assert s.groq_llm_model == "llama-3.3-70b-versatile"
     assert s.stt_language is None
     assert s.record_calls is False
+
+
+def test_short_secrets_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_SECRET", "short")
+    with pytest.raises(ValueError, match="32 characters"):
+        Settings()

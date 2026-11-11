@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["dev", "test", "prod"]
@@ -94,7 +94,8 @@ class Settings(BaseSettings):
     embeddings_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # --- call recording (phase 4) ---
-    record_calls: bool = False
+    record_calls: bool = False  # callers hear a recording + AI disclosure when on
+    storage_dir: str = "storage"  # recordings: <storage_dir>/<tenant>/<call_id>.wav
 
     # --- Google Calendar (phase 3) ---
     google_service_account_file: str | None = None
@@ -104,6 +105,13 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str | None = None
     whatsapp_app_secret: SecretStr | None = None
     whatsapp_verify_token: SecretStr | None = None
+
+    @field_validator("jwt_secret", "agent_api_token")
+    @classmethod
+    def _long_enough(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("must be at least 32 characters (openssl rand -hex 32)")
+        return value
 
 
 @lru_cache(maxsize=1)
