@@ -34,7 +34,11 @@ SUMMARIZE_CALL = "summarize_call"
 
 def make_summarizer(settings: Settings) -> Summarizer:
     if settings.groq_api_key is not None:
-        return GroqSummarizer(settings.groq_api_key.get_secret_value(), settings.groq_llm_model)
+        return GroqSummarizer(
+            settings.groq_api_key.get_secret_value(),
+            settings.groq_llm_model,
+            reasoning_effort=settings.groq_reasoning_effort,
+        )
     logger.info("no GROQ_API_KEY: call summaries use the heuristic summarizer")
     return HeuristicSummarizer()
 

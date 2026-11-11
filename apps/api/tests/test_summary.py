@@ -44,13 +44,14 @@ async def test_groq_summary_uses_llm_json_and_tool_outcome() -> None:
     route = respx.post(GROQ_URL).respond(
         200, json={"choices": [{"message": {"content": json.dumps(content)}}]}
     )
-    s = GroqSummarizer("gsk_test", "llama-3.3-70b-versatile", client=httpx.AsyncClient())
+    s = GroqSummarizer("gsk_test", "openai/gpt-oss-120b", client=httpx.AsyncClient())
     a = await s.analyze("Salon", LINES, [ToolOutcome("create_booking", True, {"booked": True})])
     assert a.summary == "Sara booked a haircut."
     assert a.outcome == "booked"  # from tools, not from the LLM
     sent = json.loads(route.calls.last.request.content)
     assert sent["response_format"] == {"type": "json_object"}
     assert "caller: I want a haircut" in sent["messages"][1]["content"]
+    assert sent["reasoning_effort"] == "low"
 
 
 @respx.mock

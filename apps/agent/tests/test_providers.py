@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from pipecat.services.groq.llm import GroqLLMSettings
 
 from receptionist_agent import providers
 from receptionist_agent.providers import (
@@ -43,9 +44,18 @@ def recorder() -> type[Recorder]:
 
 def test_groq_llm_uses_model_and_system_prompt() -> None:
     llm = build_llm(make(groq_api_key="gsk_test"), PROMPT)
-    assert type(llm).__name__ == "GroqLLMService"
-    assert llm._settings.model == "llama-3.3-70b-versatile"
-    assert llm._settings.system_instruction == PROMPT
+    groq = llm._settings  # (the service is PooledGroqLLMService; see test_llm_fallback)
+    assert isinstance(groq, GroqLLMSettings)
+    assert groq.model == "openai/gpt-oss-120b"
+    assert groq.system_instruction == PROMPT
+    assert groq.reasoning_effort == "low"
+
+
+def test_groq_reasoning_effort_can_be_turned_off_for_non_reasoning_models() -> None:
+    llm = build_llm(make(groq_api_key="gsk_test", groq_reasoning_effort=None), PROMPT)
+    groq = llm._settings
+    assert isinstance(groq, GroqLLMSettings)
+    assert groq.reasoning_effort is None
 
 
 def test_gemini_llm_selected_by_config() -> None:
@@ -137,5 +147,8 @@ def test_build_services_checks_llm_key_first(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_describe_providers_never_includes_secrets() -> None:
-    s = make(groq_api_key="gsk_super_secret")
-    assert describe_providers(s) == "stt=groq llm=groq tts=kokoro"
+    s = make(groq_api_key="gsk_super_secret", gemini_api_key="AIza_super_secret")
+    described = describe_providers(s)
+    assert described.startswith("stt=groq llm=groq (fallbacks: groq:openai/gpt-oss-20b,")
+    assert "secret" not in described
+    assert describe_providers(make(llm_fallbacks="")) == "stt=groq llm=groq tts=kokoro"

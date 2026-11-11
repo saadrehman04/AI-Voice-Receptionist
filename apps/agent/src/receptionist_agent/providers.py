@@ -13,12 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from pipecat.services.llm_service import LLMService
 from pipecat.services.stt_service import STTService
 from pipecat.services.tts_service import TTSService
 from pipecat.transcriptions.language import Language
 from pydantic import SecretStr
 
+from receptionist_agent.llm_fallback import LlmTarget, gemini_target, groq_target
 from receptionist_shared import Settings
 
 
@@ -77,15 +79,41 @@ def build_stt(settings: Settings) -> STTService:
             )
 
 
+def llm_targets(settings: Settings) -> list[LlmTarget]:
+    """Main Groq model first, then LLM_FALLBACKS whose keys are set (others are skipped)."""
+    groq_key = _require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM")
+    effort = settings.groq_reasoning_effort
+    targets = [groq_target(settings.groq_llm_model, groq_key, reasoning_effort=effort)]
+    for item in filter(None, (x.strip() for x in settings.llm_fallbacks.split(","))):
+        provider, sep, model = item.partition(":")
+        if not sep or not model:
+            raise ProviderConfigError(f"LLM_FALLBACKS entry {item!r} is not provider:model")
+        if provider == "groq":
+            targets.append(groq_target(model, groq_key, reasoning_effort=effort))
+        elif provider == "gemini":
+            key = settings.gemini_api_key
+            if key is None or not key.get_secret_value().strip():
+                logger.warning("LLM fallback skipped: GEMINI_API_KEY is not set", model=model)
+                continue
+            targets.append(gemini_target(model, key.get_secret_value()))
+        else:
+            raise ProviderConfigError(f"LLM_FALLBACKS provider {provider!r} is not groq or gemini")
+    return targets
+
+
 def build_llm(settings: Settings, system_prompt: str) -> LLMService[Any]:
     match settings.llm_provider:
         case "groq":
-            from pipecat.services.groq.llm import GroqLLMService
+            from receptionist_agent.groq_pool import PooledGroqLLMService
 
-            return GroqLLMService(
-                api_key=_require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM"),
-                settings=GroqLLMService.Settings(
-                    model=settings.groq_llm_model, system_instruction=system_prompt
+            targets = llm_targets(settings)
+            return PooledGroqLLMService(
+                targets=targets,
+                api_key=targets[0].api_key,
+                settings=PooledGroqLLMService.Settings(
+                    model=settings.groq_llm_model,
+                    system_instruction=system_prompt,
+                    reasoning_effort=settings.groq_reasoning_effort,
                 ),
             )
         case "gemini":
@@ -141,4 +169,7 @@ def build_services(settings: Settings, system_prompt: str, *, urdu: bool = False
 
 def describe_providers(settings: Settings) -> str:
     """One line describing the configured STT/LLM/TTS providers (never secrets)."""
-    return f"stt={settings.stt_provider} llm={settings.llm_provider} tts={settings.tts_provider}"
+    llm: str = settings.llm_provider
+    if llm == "groq" and settings.llm_fallbacks.strip():
+        llm += f" (fallbacks: {settings.llm_fallbacks})"
+    return f"stt={settings.stt_provider} llm={llm} tts={settings.tts_provider}"

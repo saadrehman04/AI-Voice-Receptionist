@@ -58,7 +58,7 @@ def test_env_example_parses(tmp_path: Path) -> None:
     assert s.tts_provider == "kokoro"
     # empty values in the example mean "unset", so they fall back to None
     assert s.groq_api_key is None
-    assert s.groq_llm_model == "llama-3.3-70b-versatile"
+    assert s.groq_llm_model == "openai/gpt-oss-120b"
     assert s.stt_language is None
     assert s.record_calls is False
 

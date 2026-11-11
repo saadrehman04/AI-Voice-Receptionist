@@ -113,9 +113,11 @@ class GroqSummarizer:
         *,
         client: httpx.AsyncClient | None = None,
         fallback: Summarizer | None = None,
+        reasoning_effort: str | None = "low",
     ) -> None:
         self._key = api_key
         self._model = model
+        self._reasoning_effort = reasoning_effort
         self._client = client or httpx.AsyncClient(timeout=20.0)
         self._fallback = fallback or HeuristicSummarizer()
 
@@ -124,7 +126,7 @@ class GroqSummarizer:
     ) -> Analysis:
         outcome = outcome_from_tools(tools)
         transcript = "\n".join(f"{ln.speaker}: {ln.text}" for ln in lines)[-12000:]
-        body = {
+        body: dict[str, Any] = {
             "model": self._model,
             "temperature": 0,
             "response_format": {"type": "json_object"},
@@ -137,6 +139,8 @@ class GroqSummarizer:
                 },
             ],
         }
+        if self._reasoning_effort is not None:
+            body["reasoning_effort"] = self._reasoning_effort
         try:
             response = await self._client.post(
                 GROQ_URL, json=body, headers={"Authorization": f"Bearer {self._key}"}

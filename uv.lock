@@ -2059,6 +2059,7 @@ version = "0.1.0"
 source = { editable = "apps/agent" }
 dependencies = [
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "pipecat-ai", extra = ["google", "groq", "kokoro", "piper", "runner", "webrtc", "whisper"] },
     { name = "receptionist-shared" },
 ]
@@ -2066,6 +2067,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.16.0" },
     { name = "pipecat-ai", extras = ["google", "groq", "kokoro", "ollama", "piper", "runner", "silero", "webrtc", "whisper"], specifier = "==1.15.0" },
     { name = "receptionist-shared", editable = "packages/shared" },
 ]

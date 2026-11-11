@@ -41,12 +41,18 @@ class Settings(BaseSettings):
     tts_provider: TtsProvider = "kokoro"
 
     # --- provider credentials and models ---
-    # Defaults were checked against each provider's model list on 2026-11-11.
+    # Defaults were checked against each provider's live model list (with a key) on 2026-11-11.
     groq_api_key: SecretStr | None = None
-    groq_llm_model: str = "llama-3.3-70b-versatile"
+    groq_llm_model: str = "openai/gpt-oss-120b"
+    # For reasoning models (gpt-oss, qwen): "low" keeps the first token fast (DECISIONS D23).
+    # Unset for non-reasoning models, which reject the parameter.
+    groq_reasoning_effort: Literal["none", "default", "low", "medium", "high"] | None = "low"
     groq_stt_model: str = "whisper-large-v3-turbo"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.5-flash-lite"
+    # When LLM_PROVIDER=groq: models tried in order when the main one is rate-limited or down,
+    # as "provider:model" (provider groq or gemini). Empty = no fallback. See DECISIONS D23.
+    llm_fallbacks: str = "groq:openai/gpt-oss-20b,gemini:gemini-3.5-flash-lite"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2:3b"
     faster_whisper_model: str = "small"
