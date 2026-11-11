@@ -6,7 +6,7 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat migrate
+.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -36,6 +36,9 @@ latency: ## P50/P95 per stage from logs/turns.jsonl (ARGS="--last 50")
 
 migrate: ## Apply database migrations (alembic upgrade head)
 	$(UV_RUN) alembic -c apps/api/alembic.ini upgrade head
+
+worker: ## Run the background worker (post-call summaries)
+	$(UV_RUN) python -m receptionist_api.worker
 
 api: ## Run the FastAPI backend (auto-reload in dev)
 	$(UV_RUN) receptionist-api

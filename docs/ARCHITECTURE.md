@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 3 (tools served by the api: calendar, holds, Postgres, knowledge base). Call records and the dashboard are still planned.
+Status: Phase 4 (multi-tenant backend with owner auth, call records and post-call analysis). The dashboard UI comes in Phase 7.
 
 ## Big picture
 
@@ -93,8 +93,28 @@ flowchart LR
       messages     : messages table (kind = message | handoff)
       knowledge    : tenant YAML facts, then markdown sections by embedding similarity
   ```
-- **Database (Alembic, `make migrate`):** `tenants`, `bookings` (with the no-overlap exclusion
-  constraint), `messages`. Every row has `tenant_id`.
+- **Call records:** the agent's recorder sends call start, each caller/agent turn (agent turns
+  carry that reply's latency breakdown), each tool call and call end to the api from a background
+  task (never on the audio path). Ending a call queues a `summarize_call` job; `make worker` takes it
+  from Redis, computes the outcome from tool calls and asks the LLM for summary/intent/sentiment.
+- **Owners:** `POST /v1/onboarding` creates a business (validated config) + owner account and returns
+  a JWT; `POST /v1/auth/login`. Dashboard routes under `/v1/dashboard/...` take the tenant only from
+  the token (calls + transcript + tool calls, bookings, messages, stats with P50/P95 latency,
+  settings). See D18.
+- **Database (Alembic, `make migrate`):** `tenants` (config JSONB), `users`, `services`, `calls`,
+  `turns`, `tool_calls`, `bookings` (no-overlap exclusion constraint), `messages`. Every row has
+  `tenant_id`.
+
+  ```mermaid
+  erDiagram
+      tenants ||--o{ users : owns
+      tenants ||--o{ services : offers
+      tenants ||--o{ calls : receives
+      calls ||--o{ turns : has
+      calls ||--o{ tool_calls : made
+      tenants ||--o{ bookings : has
+      tenants ||--o{ messages : has
+  ```
 
 ## Ports (local)
 

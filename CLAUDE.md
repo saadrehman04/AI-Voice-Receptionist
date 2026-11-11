@@ -49,6 +49,7 @@ Run from the repo root. `make help` lists everything.
 - `make chat`: text chat with the receptionist (real LLM + tools, stub bookings; `ARGS="--tenant demo-workshop"`); needs GROQ_API_KEY
 - `make latency`: P50/P95 per stage from logs/turns.jsonl (`ARGS="--last 50"`)
 - `make migrate`: apply Alembic migrations to DATABASE_URL (run after `make up`)
+- `make worker`: background worker for post-call summaries (Redis queue)
 - `make api`: FastAPI on 127.0.0.1:8000 with reload in dev (`receptionist-api`); docs at /docs
 - `make web`: Next.js dev server on :3000 (`pnpm --dir apps/web dev`)
 - `make test`: pytest, no network or model downloads (tests marked `models` are skipped). Needs `make up` for the Postgres/Redis tests; they skip without it (CI sets REQUIRE_SERVICES=1 so they never skip there)

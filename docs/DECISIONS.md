@@ -163,3 +163,50 @@ Short entries, newest last: what we decided, why, and what else we considered.
   match an English note. In-memory vectors are plenty for a few dozen sections per tenant.
 - **Alternatives:** pgvector (worth it at thousands of chunks); a hosted embedding API (cost, and
   an extra network hop on the call path); keyword-only search (misses paraphrases).
+
+## D18. Tenant isolation by construction: the tenant comes only from the verified token (Phase 4)
+- **Decision:** owner JWTs (HS256, 12 h) carry the tenant id. Every dashboard route reads the tenant
+  from the token and every query filters on `tenant_id`; no route accepts a tenant id or slug from
+  the client. Records of another tenant are simply not found (404), not "forbidden" (no existence
+  leak). Agent routes use a separate shared token and are scoped by slug; an owner token can't call
+  them and vice versa. Secrets shorter than 32 characters are rejected at startup.
+- **Why:** isolation bugs usually come from trusting a client-supplied id. Removing that input
+  removes the bug class. The isolation tests create two businesses through real onboarding and try
+  every read and write across the boundary.
+- **Alternatives:** Postgres row-level security (strong, worth adding as defence in depth later;
+  more moving parts with a pooled async engine); one schema per tenant (heavy for a few businesses).
+
+## D19. Tenant config moves into Postgres; YAML becomes seed data (Phase 4)
+- **Decision:** `tenants.config` holds the validated `TenantConfig` as JSONB (plus a `services`
+  table mirror for reporting). Seed YAML is inserted once if missing and never overwrites owner
+  edits. The agent fetches config from `GET /v1/tenants/{slug}/config` when it uses the api.
+- **Why:** owners must be able to change prices and hours from the dashboard (Phase 7), and new
+  businesses sign up through onboarding, so the files can't stay the source of truth.
+- **Alternatives:** fully normalised tables for hours/services/FAQ (more joins and migrations for
+  data that is always read whole); keeping YAML (no self-service).
+
+## D20. Our own small Redis job queue instead of arq (Phase 4)
+- **Decision:** `jobs.py`, the "reliable queue" pattern: LPUSH, BLMOVE to a processing list, ack by
+  LREM, retries then a dead-letter list, and recovery of a crashed worker's jobs at start-up.
+  `make worker` runs post-call analysis from it.
+- **Why:** arq and saq both pin the Redis client to an older major version than ours. The pattern is
+  ~100 lines, fully tested against real Redis, and easy to explain.
+- **Alternatives:** downgrade redis-py for arq (blocks other upgrades); Celery (heavy for one job type).
+
+## D21. Post-call analysis: facts from tools, words from the LLM (Phase 4)
+- **Decision:** the call outcome (booked / rescheduled / cancelled / message / handoff / no action)
+  is computed from successful tool calls. Only the summary, intent and sentiment come from the LLM
+  (Groq, JSON mode, validated); a heuristic covers no key or LLM failure.
+- **Why:** owners trust "booked" because it is literally what the system did. The LLM can't mislabel
+  a failed booking as booked.
+- **Alternatives:** asking the LLM for the outcome too (cheaper code, occasionally wrong facts).
+
+## D22. Call records never block the call (Phase 4)
+- **Decision:** the agent's `ApiCallRecorder` queues records in memory and a background task sends
+  them in order with 3 retries; on hang-up it flushes with a 10 s cap. Writes are idempotent on the
+  api side. Optional stereo recording (caller left, agent right) is written once at hang-up, with a
+  spoken "this call may be recorded and you are speaking with an AI assistant" first.
+- **Why:** a slow or down api must never add latency or end a live call; losing a log line is
+  acceptable, freezing a caller is not.
+- **Alternatives:** synchronous writes per turn (latency on the audio path); writing everything at
+  hang-up only (a crash loses the whole call).
