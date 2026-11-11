@@ -31,6 +31,7 @@ class Services:
     stt: STTService
     llm: LLMService[Any]
     tts: TTSService
+    urdu_tts: TTSService | None = None  # set when the tenant speaks Urdu
 
 
 def _require_key(key: SecretStr | None, env_name: str, provider: str) -> str:
@@ -119,12 +120,23 @@ def build_tts(settings: Settings) -> TTSService:
             return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_voice))
 
 
-def build_services(settings: Settings, system_prompt: str) -> Services:
-    """Build all three services. Cloud ones are validated first so a missing key fails fast."""
+def build_urdu_tts(settings: Settings) -> TTSService:
+    """Piper's Urdu voice: the only free Urdu TTS we found (DECISIONS D10)."""
+    from pipecat.services.piper.tts import PiperTTSService
+
+    return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_urdu_voice))
+
+
+def build_services(settings: Settings, system_prompt: str, *, urdu: bool = False) -> Services:
+    """Build all services. Cloud ones are validated first so a missing key fails fast.
+
+    `urdu=True` adds a second, Urdu TTS for tenants that speak Urdu.
+    """
     llm = build_llm(settings, system_prompt)
     stt = build_stt(settings)
     tts = build_tts(settings)
-    return Services(stt=stt, llm=llm, tts=tts)
+    urdu_tts = build_urdu_tts(settings) if urdu else None
+    return Services(stt=stt, llm=llm, tts=tts, urdu_tts=urdu_tts)
 
 
 def describe_providers(settings: Settings) -> str:

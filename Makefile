@@ -6,7 +6,7 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs agent api web test lint fmt evals latency test-models
+.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -27,6 +27,9 @@ logs: ## Follow Postgres + Redis logs
 
 agent: ## Run the voice agent; talk to it at http://localhost:7860/client
 	$(UV_RUN) python -m receptionist_agent
+
+chat: ## Text chat with the receptionist (real LLM + tools, stub bookings; ARGS="--tenant demo-workshop")
+	$(UV_RUN) python -m receptionist_agent.chat $(ARGS)
 
 latency: ## P50/P95 per stage from logs/turns.jsonl (ARGS="--last 50")
 	$(UV_RUN) python -m receptionist_agent.latency_report $(ARGS)

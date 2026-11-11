@@ -86,3 +86,24 @@ async def test_kokoro_speech_is_transcribed_by_faster_whisper() -> None:
     )
     for word in ("book", "haircut", "tomorrow"):
         assert word in text
+
+
+async def test_piper_speaks_urdu_greeting() -> None:
+    from receptionist_agent.providers import build_urdu_tts
+
+    t0 = time.perf_counter()
+    tts = build_urdu_tts(Settings(_env_file=None))
+    t_load = time.perf_counter() - t0
+    text = "السلام علیکم، نور بیوٹی سیلون میں فون کرنے کا شکریہ۔"
+    t0 = time.perf_counter()
+    down, _ = await run_test(
+        tts,
+        frames_to_send=[TTSSpeakFrame(text)],
+        pipeline_params=PipelineParams(audio_out_sample_rate=24000),
+    )
+    t_synth = time.perf_counter() - t0
+    chunks = [f for f in down if isinstance(f, TTSAudioRawFrame)]
+    assert chunks, "Piper produced no Urdu audio"
+    secs = sum(len(c.audio) for c in chunks) / 2 / chunks[0].sample_rate
+    print(f"\npiper ur_PK load {t_load:.1f}s, synth {t_synth:.2f}s for {secs:.1f}s of speech")
+    assert secs > 1.0
