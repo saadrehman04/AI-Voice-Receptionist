@@ -1,0 +1,15 @@
+[project]
+name = "receptionist-agent"
+version = "0.1.0"
+description = "Pipecat voice agent: VAD -> STT -> LLM -> TTS (pipeline arrives in Phase 1)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "receptionist-shared",
+]
+
+[project.scripts]
+receptionist-agent = "receptionist_agent.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"

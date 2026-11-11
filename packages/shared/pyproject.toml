@@ -1,0 +1,13 @@
+[project]
+name = "receptionist-shared"
+version = "0.1.0"
+description = "Shared config, schemas and models used by the agent and the api."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.14.3",
+    "pydantic-settings>=2.16.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"

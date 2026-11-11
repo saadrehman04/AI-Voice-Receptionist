@@ -1,0 +1,15 @@
+[project]
+name = "receptionist-evals"
+version = "0.1.0"
+description = "Simulated-caller eval suite (built in Phase 6)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "receptionist-shared",
+]
+
+[project.scripts]
+receptionist-evals = "receptionist_evals.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"

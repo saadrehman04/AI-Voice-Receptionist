@@ -1,0 +1,17 @@
+[project]
+name = "receptionist-api"
+version = "0.1.0"
+description = "FastAPI backend: tenants, bookings, calls, tools for the agent."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "receptionist-shared",
+    "fastapi>=0.162.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+receptionist-api = "receptionist_api.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"
