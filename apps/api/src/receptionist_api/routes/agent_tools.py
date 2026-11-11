@@ -8,6 +8,7 @@ Errors use stable codes so the agent can react: `tenant_not_found` (404), `unkno
 from __future__ import annotations
 
 import hmac
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -19,13 +20,18 @@ from receptionist_api.booking_service import (
     UnknownServiceError,
 )
 from receptionist_api.calendar import CalendarError
+from receptionist_api.calls import CallNotFoundError, CallRecords
+from receptionist_api.jobs import JobQueue
 from receptionist_api.knowledge_base import KnowledgeBase
 from receptionist_api.tenants import TenantRegistry
+from receptionist_api.worker import SUMMARIZE_CALL
 from receptionist_shared.api_models import (
     AvailabilityRequest,
     AvailabilityResponse,
     BookingCreate,
     BookingOut,
+    CallEnd,
+    CallStart,
     CancelRequest,
     HoldRequest,
     HoldResponse,
@@ -34,6 +40,8 @@ from receptionist_shared.api_models import (
     MessageCreate,
     MessageOut,
     RescheduleRequest,
+    ToolCallIn,
+    TurnIn,
 )
 from receptionist_shared.phone import normalize_pk_phone
 from receptionist_shared.tenant import TenantConfig
@@ -165,3 +173,71 @@ async def knowledge_lookup(
 ) -> LookupResponse:
     result = await kb.lookup(tenant, req.question, req.language)
     return LookupResponse(found=result.found, answer=result.answer, sources=result.sources)
+
+
+# ---------------------------------------------------------------- tenant config + call records
+
+
+@router.get("/config", response_model=TenantConfig)
+async def tenant_config(tenant: TenantDep) -> TenantConfig:
+    """The tenant's current settings, so the agent can serve tenants created via onboarding."""
+    return tenant
+
+
+def _tenant_id(request: Request, tenant: TenantConfig) -> uuid.UUID:
+    tenant_id = request.app.state.resources.tenants.id_of(tenant.slug)
+    if tenant_id is None:
+        raise _error(404, "tenant_not_found", f"no tenant {tenant.slug!r}")
+    return tenant_id  # type: ignore[no-any-return]
+
+
+def get_calls(request: Request) -> CallRecords:
+    records: CallRecords = request.app.state.resources.calls
+    return records
+
+
+CallsDep = Annotated[CallRecords, Depends(get_calls)]
+
+
+@router.post("/calls", status_code=status.HTTP_201_CREATED)
+async def start_call(
+    req: CallStart, tenant: TenantDep, calls: CallsDep, request: Request
+) -> dict[str, str]:
+    pk = await calls.start(_tenant_id(request, tenant), req)
+    return {"id": str(pk)}
+
+
+@router.post("/calls/{call_id}/turns", status_code=status.HTTP_201_CREATED)
+async def add_turn(
+    call_id: str, req: TurnIn, tenant: TenantDep, calls: CallsDep, request: Request
+) -> dict[str, bool]:
+    try:
+        await calls.add_turn(_tenant_id(request, tenant), call_id, req)
+    except CallNotFoundError as exc:
+        raise _error(404, "call_not_found", call_id) from exc
+    return {"ok": True}
+
+
+@router.post("/calls/{call_id}/tool-calls", status_code=status.HTTP_201_CREATED)
+async def add_tool_call(
+    call_id: str, req: ToolCallIn, tenant: TenantDep, calls: CallsDep, request: Request
+) -> dict[str, bool]:
+    try:
+        await calls.add_tool_call(_tenant_id(request, tenant), call_id, req)
+    except CallNotFoundError as exc:
+        raise _error(404, "call_not_found", call_id) from exc
+    return {"ok": True}
+
+
+@router.post("/calls/{call_id}/end")
+async def end_call(
+    call_id: str, req: CallEnd, tenant: TenantDep, calls: CallsDep, request: Request
+) -> dict[str, str]:
+    tenant_id = _tenant_id(request, tenant)
+    try:
+        pk = await calls.end(tenant_id, call_id, req)
+    except CallNotFoundError as exc:
+        raise _error(404, "call_not_found", call_id) from exc
+    queue: JobQueue = request.app.state.resources.queue
+    job_id = await queue.enqueue(SUMMARIZE_CALL, {"tenant_id": str(tenant_id), "call_pk": str(pk)})
+    return {"id": str(pk), "job_id": job_id}

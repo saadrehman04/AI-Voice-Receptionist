@@ -14,6 +14,9 @@ dependencies = [
     "google-auth>=2.62.2",
     "httpx>=0.28.1",
     "fastembed>=0.9.1",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.15.1",
+    "email-validator>=2.2.0",
 ]
 
 [project.scripts]

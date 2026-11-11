@@ -25,13 +25,16 @@ from receptionist_api.calendar import (
     GoogleCalendar,
     ServiceAccountTokens,
 )
+from receptionist_api.calls import CallRecords
 from receptionist_api.db.session import make_engine, make_sessionmaker
 from receptionist_api.holds import SlotHolds
+from receptionist_api.jobs import JobQueue
 from receptionist_api.knowledge_base import KnowledgeBase, make_embedder
-from receptionist_api.routes import agent_tools
-from receptionist_api.tenants import TenantRegistry
+from receptionist_api.routes import agent_tools, owners
+from receptionist_api.tenants import TenantRegistry, TenantStore
 from receptionist_shared import Settings, get_settings
 from receptionist_shared.logging import configure_logging
+from receptionist_shared.tenant import list_tenants
 
 
 class Health(BaseModel):
@@ -43,9 +46,13 @@ class Health(BaseModel):
 @dataclass
 class Resources:
     tenants: TenantRegistry
+    store: TenantStore
     bookings: BookingService
+    calls: CallRecords
+    queue: JobQueue
     kb: KnowledgeBase
     agent_token: str | None
+    jwt_secret: str | None
     closers: list[Callable[[], Awaitable[object]]] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -68,20 +75,23 @@ def make_calendar(settings: Settings) -> tuple[Calendar, list[Callable[[], Await
 
 async def build_resources(settings: Settings) -> Resources:
     engine = make_engine(settings.database_url)
+    sessions = make_sessionmaker(engine)
     redis = Redis.from_url(settings.redis_url)
     calendar, closers = make_calendar(settings)
-    bookings = BookingService(
-        make_sessionmaker(engine), SlotHolds(redis, hold_secs=settings.hold_secs), calendar
-    )
-    tenants = TenantRegistry.from_dir(Path(settings.tenants_dir))
-    for tenant in tenants.all():
-        await bookings.sync_tenant(tenant)
+    bookings = BookingService(sessions, SlotHolds(redis, hold_secs=settings.hold_secs), calendar)
+    tenants = TenantRegistry()
+    store = TenantStore(sessions, tenants)
+    await store.seed(list_tenants(Path(settings.tenants_dir)))
+    await store.load()
     embedder = await asyncio.to_thread(
         make_embedder, settings.embeddings_enabled, settings.embeddings_model
     )
     token = settings.agent_api_token.get_secret_value() if settings.agent_api_token else None
     if token is None:
         logger.warning("AGENT_API_TOKEN is not set: tool endpoints will refuse every request")
+    jwt_secret = settings.jwt_secret.get_secret_value() if settings.jwt_secret else None
+    if jwt_secret is None:
+        logger.warning("JWT_SECRET is not set: owner login and the dashboard are disabled")
     logger.info(
         "api ready",
         tenants=[t.slug for t in tenants.all()],
@@ -90,9 +100,13 @@ async def build_resources(settings: Settings) -> Resources:
     )
     return Resources(
         tenants=tenants,
+        store=store,
         bookings=bookings,
+        calls=CallRecords(sessions),
+        queue=JobQueue(redis, "default"),
         kb=KnowledgeBase(Path(settings.kb_dir), embedder),
         agent_token=token,
+        jwt_secret=jwt_secret,
         closers=[*closers, redis.aclose, engine.dispose],
     )
 
@@ -123,6 +137,8 @@ def create_app(resources: Resources | None = None) -> FastAPI:
         return Health(status="ok", environment=get_settings().environment, version=app.version)
 
     app.include_router(agent_tools.router)
+    app.include_router(owners.auth_router)
+    app.include_router(owners.dashboard)
     return app
 
 

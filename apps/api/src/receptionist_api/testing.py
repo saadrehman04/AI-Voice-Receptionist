@@ -25,15 +25,19 @@ from sqlalchemy.engine import make_url
 
 from receptionist_api.booking_service import BookingService
 from receptionist_api.calendar import FakeCalendar
+from receptionist_api.calls import CallRecords
 from receptionist_api.db.session import make_engine, make_sessionmaker
 from receptionist_api.holds import SlotHolds
+from receptionist_api.jobs import JobQueue
 from receptionist_api.knowledge_base import KnowledgeBase
 from receptionist_api.main import Resources, create_app
-from receptionist_api.tenants import TenantRegistry
+from receptionist_api.tenants import TenantRegistry, TenantStore
 from receptionist_shared import get_settings
+from receptionist_shared.tenant import list_tenants
 
 REPO = Path(__file__).resolve().parents[4]
 TOKEN = "test-agent-token"  # noqa: S105 - test-only value, never a real secret
+JWT_SECRET = "test-jwt-secret-not-for-production-use-0123456789"  # noqa: S105
 REDIS_TEST_DB = 15
 
 
@@ -116,7 +120,12 @@ async def bookings(
     async with engine.begin() as conn:
         from sqlalchemy import text
 
-        await conn.execute(text("TRUNCATE bookings, messages, tenants CASCADE"))
+        await conn.execute(
+            text(
+                "TRUNCATE tool_calls, turns, calls, users, services, bookings, messages, "
+                "tenants CASCADE"
+            )
+        )
     service = BookingService(
         make_sessionmaker(engine),
         SlotHolds(redis, hold_secs=120),
@@ -128,22 +137,30 @@ async def bookings(
 
 
 @pytest.fixture
-def registry() -> TenantRegistry:
-    return TenantRegistry.from_dir(REPO / "tenants")
+async def resources(bookings: BookingService, redis: Redis) -> Resources:
+    registry = TenantRegistry()
+    store = TenantStore(bookings._sessions, registry)
+    await store.seed(list_tenants(REPO / "tenants"))
+    await store.load()
+    return Resources(
+        tenants=registry,
+        store=store,
+        bookings=bookings,
+        calls=CallRecords(bookings._sessions),
+        queue=JobQueue(redis, "test"),
+        kb=KnowledgeBase(REPO / "tenants/kb", embedder=None),
+        agent_token=TOKEN,
+        jwt_secret=JWT_SECRET,
+    )
 
 
 @pytest.fixture
-async def api(
-    bookings: BookingService, registry: TenantRegistry
-) -> AsyncIterator[httpx.AsyncClient]:
-    for tenant in registry.all():
-        await bookings.sync_tenant(tenant)
-    resources = Resources(
-        tenants=registry,
-        bookings=bookings,
-        kb=KnowledgeBase(REPO / "tenants/kb", embedder=None),
-        agent_token=TOKEN,
-    )
+def registry(resources: Resources) -> TenantRegistry:
+    return resources.tenants
+
+
+@pytest.fixture
+async def api(resources: Resources) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(resources)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
