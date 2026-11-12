@@ -126,6 +126,42 @@ class CallRecords:
             )
             return pk
 
+    async def close_abandoned(
+        self, *, idle_for: timedelta, now: datetime
+    ) -> list[tuple[uuid.UUID, uuid.UUID]]:
+        """Close calls the agent stopped reporting on (it crashed or was restarted mid-call), so
+        they don't stay "in progress" forever without a summary. A call counts as abandoned when
+        it is still active and nothing was said for `idle_for`; it ends at its last turn.
+
+        The one query that spans tenants: it's the worker's housekeeping, not a tenant request.
+        Each row is updated with its own tenant_id. Returns (tenant_id, call_pk) of each closed
+        call, for the summary job.
+        """
+        last_turn = (
+            select(Turn.call_pk, func.max(Turn.spoken_at).label("at"))
+            .group_by(Turn.call_pk)
+            .subquery()
+        )
+        last_seen = func.coalesce(last_turn.c.at, Call.started_at)
+        async with transaction(self._sessions) as session:
+            rows = (
+                await session.execute(
+                    select(Call.id, Call.tenant_id, last_seen.label("last_seen"))
+                    .outerjoin(last_turn, last_turn.c.call_pk == Call.id)
+                    .where(Call.status == "active", last_seen < now - idle_for)
+                )
+            ).all()
+            closed = []
+            for pk, tenant_id, seen in rows:
+                result = await session.execute(
+                    update(Call)
+                    .where(Call.id == pk, Call.tenant_id == tenant_id, Call.status == "active")
+                    .values(ended_at=seen, status="ended")
+                )
+                if result.rowcount:  # type: ignore[attr-defined]  # the agent's /end can race us
+                    closed.append((tenant_id, pk))
+            return closed
+
     async def save_analysis(
         self,
         tenant_id: uuid.UUID,

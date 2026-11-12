@@ -498,3 +498,12 @@ Short entries, newest last: what we decided, why, and what else we considered.
   date costs one more LLM round trip at lookup time rather than a wrong day spoken.
 - **Alternatives:** shorter Gemini timeout (cuts healthy slow answers: D37); racing Groq and
   Gemini in parallel (doubles token use on the free tiers); trusting the estimate (what failed).
+
+## D40. The worker closes calls whose agent went away (2026-11-13)
+- **Decision:** once a minute the worker ends any call still "active" with no new turn for 10
+  minutes, at the time of its last turn, and queues its summary.
+- **Why:** a call only ended when the agent reported it. Restarting the agent mid-call (seen
+  live) left the call "in progress" with no summary for good; a crash would do the same. Ending
+  at the last turn keeps the usage minutes honest.
+- **Alternatives:** a heartbeat from the agent (more traffic for the same answer); closing on
+  agent start-up (misses a crashed agent that never comes back, and several agents can run).

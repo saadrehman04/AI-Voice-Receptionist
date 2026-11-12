@@ -64,7 +64,7 @@ flowchart LR
     web -->|server-side only| api
 ```
 
-More: [ARCHITECTURE.md](docs/ARCHITECTURE.md) · 39 decision records in
+More: [ARCHITECTURE.md](docs/ARCHITECTURE.md) · 40 decision records in
 [DECISIONS.md](docs/DECISIONS.md) · [SECURITY.md](docs/SECURITY.md) ·
 the story and trade-offs in [CASE_STUDY.md](docs/CASE_STUDY.md).
 

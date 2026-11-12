@@ -2,13 +2,18 @@
 
 The api enqueues `summarize_call` when the agent reports a call ended. The job is idempotent
 (it just recomputes and overwrites the analysis), so retries and recovery are safe.
+
+Once a minute the worker also closes calls the agent stopped reporting on (it crashed or was
+restarted mid-call) and queues their summary, so none stays "in progress" forever.
 """
 
 from __future__ import annotations
 
 import asyncio
 import signal
+import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -43,6 +48,23 @@ def make_summarizer(settings: Settings) -> Summarizer:
     return HeuristicSummarizer()
 
 
+# A call with no new turn for this long has lost its agent. Long enough for any real pause (the
+# agent itself ends a silent call well before this), short enough that the owner soon sees it.
+ABANDONED_AFTER = timedelta(minutes=10)
+SWEEP_EVERY_SECS = 60.0
+
+
+async def close_abandoned_calls(
+    records: CallRecords, queue: JobQueue, *, now: datetime | None = None
+) -> int:
+    """Close calls whose agent went away, and queue their summaries. Returns how many."""
+    closed = await records.close_abandoned(idle_for=ABANDONED_AFTER, now=now or datetime.now(UTC))
+    for tenant_id, call_pk in closed:
+        await queue.enqueue(SUMMARIZE_CALL, {"tenant_id": str(tenant_id), "call_pk": str(call_pk)})
+        logger.warning("closed a call its agent stopped reporting on", call_pk=str(call_pk))
+    return len(closed)
+
+
 def make_handlers(
     sessions: async_sessionmaker[AsyncSession], records: CallRecords, summarizer: Summarizer
 ) -> dict[str, Handler]:
@@ -74,11 +96,19 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
     sessions = make_sessionmaker(engine)
     redis = Redis.from_url(settings.redis_url)
     queue = JobQueue(redis, "default")
-    handlers = make_handlers(sessions, CallRecords(sessions), make_summarizer(settings))
+    records = CallRecords(sessions)
+    handlers = make_handlers(sessions, records, make_summarizer(settings))
     await queue.recover()
     logger.info("worker started", queue=queue.key)
+    next_sweep = 0.0
     try:
         while not stop.is_set():
+            if time.monotonic() >= next_sweep:
+                next_sweep = time.monotonic() + SWEEP_EVERY_SECS
+                try:
+                    await close_abandoned_calls(records, queue)
+                except Exception:  # housekeeping must never stop the summaries
+                    logger.exception("closing abandoned calls failed")
             await queue.run_one(handlers, wait_secs=2)
     finally:
         await redis.aclose()
