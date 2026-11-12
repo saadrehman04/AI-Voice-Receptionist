@@ -269,7 +269,10 @@ class FakePhone:
 
     async def say(self, pcm16: bytes) -> None:
         self.mic.say(pcm16)
-        await self.mic.done.wait()
+        # If the agent hangs up mid-sentence nothing plays the rest: don't wait forever.
+        seconds = len(pcm16) / 2 / RATE
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.mic.done.wait(), seconds + 3)
 
     async def wait_for_reply(self, *, quiet_secs: float = 2.5, within: float = 40.0) -> bool:
         """Wait until the agent has spoken and then gone quiet. False if it hasn't `within`."""

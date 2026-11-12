@@ -19,6 +19,7 @@ local Piper voice instead, so the caller still hears the reply, in a different v
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -30,6 +31,8 @@ from pipecat.services.azure.tts import AzureTTSService
 from receptionist_agent.local_tts import LocalVoice
 
 FIRST_AUDIO_SECS = 5.0  # Azure's first audio normally comes in ~0.2-0.5 s
+TRIP_AFTER = 2  # sentences in a row Azure failed on...
+SKIP_SECS = 60.0  # ...before it is skipped this long (seen live: each failure cost ~0.5 s)
 
 
 class QuickStopAzureTTSService(AzureTTSService):
@@ -45,6 +48,8 @@ class QuickStopAzureTTSService(AzureTTSService):
         self._local = local_fallback
         self._first_audio_secs = first_audio_secs
         self.served_locally = 0
+        self._failures = 0
+        self._skip_until = 0.0
 
     async def _handle_interruption(
         self, frame: InterruptionFrame, direction: FrameDirection
@@ -68,6 +73,10 @@ class QuickStopAzureTTSService(AzureTTSService):
                 await stopping
             except Exception as exc:  # the old synthesis is gone either way
                 logger.warning("azure stop failed", error=type(exc).__name__)
+        if self._local is not None and time.monotonic() < self._skip_until:
+            async for frame in self._speak_locally(text, context_id, "azure skipped for now"):
+                yield frame
+            return
         azure = super().run_tts(text, context_id)
         failure: str | None = None
         try:
@@ -88,12 +97,24 @@ class QuickStopAzureTTSService(AzureTTSService):
                 if isinstance(frame, TTSAudioRawFrame):
                     break
             if failure is None:
+                self._failures = 0
                 async for frame in azure:  # playing: errors from here pass on as they are
                     yield frame
                 return
         finally:
             await azure.aclose()
-        logger.warning("azure tts failed, speaking with the local voice", error=failure)
+        self._failures += 1
+        if self._failures >= TRIP_AFTER:
+            # A pulled key or an outage: stop paying a failed round trip before every sentence.
+            self._skip_until = time.monotonic() + SKIP_SECS
+            logger.error("azure tts keeps failing; using the local voice", skip_secs=SKIP_SECS)
+        async for frame in self._speak_locally(text, context_id, failure):
+            yield frame
+
+    async def _speak_locally(
+        self, text: str, context_id: str, failure: str
+    ) -> AsyncGenerator[Frame, None]:
+        logger.warning("speaking with the local voice", reason=failure)
         if self._local is None:
             yield ErrorFrame(error=f"azure tts failed: {failure}")
             return

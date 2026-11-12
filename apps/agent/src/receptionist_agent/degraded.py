@@ -201,8 +201,10 @@ def plan(body: Mapping[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
     """What the scripted receptionist says next: (text, tool calls)."""
     messages = _messages(body)
     lang = language_of(messages)
-    if _tool_result(messages, END_CALL_PREFIX) is not None:
-        return None, []  # hung up already; nothing more to say
+    if any(str(m.get("tool_call_id", "")).startswith(END_CALL_PREFIX) for m in messages):
+        # Hanging up already. Seen live: the caller's last words arrived as a new turn while
+        # the goodbye played, and the script took the same message twice.
+        return None, []
     end = _function(_call_id(END_CALL_PREFIX, messages), "end_call", {"reason": "degraded"})
     saved = _tool_result(messages, MESSAGE_CALL_PREFIX)
     if saved is not None:

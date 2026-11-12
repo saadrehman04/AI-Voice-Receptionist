@@ -160,6 +160,19 @@ def test_the_message_carries_the_whole_request() -> None:
     assert message == "A facial on Friday? / Sara, 0321 5550101"
 
 
+def test_nothing_more_once_the_script_has_hung_up() -> None:
+    end = {"id": "degraded_end_1", "type": "function", "function": {"name": "end_call"}}
+    turns = [
+        user("A facial on Friday"),
+        {"role": "assistant", "content": degraded.ASK["en"]},
+        user("Sara, 0321 5550101"),
+        {"role": "assistant", "content": degraded.THANKS["en"], "tool_calls": [end]},
+        {"role": "tool", "tool_call_id": "degraded_end_1", "content": '{"ok": true}'},
+        user("Please call me back."),  # arrived while the goodbye played
+    ]
+    assert degraded.plan(body(*turns)) == (None, [])
+
+
 def test_an_interrupted_ask_still_counts() -> None:
     cut = {"role": "assistant", "content": degraded.ASK["en"][:40]}
     _, calls = degraded.plan(body(user("hi"), cut, user("Call me back please")))
@@ -422,6 +435,22 @@ async def test_azure_error_is_spoken_by_the_local_voice(monkeypatch: pytest.Monk
 async def test_azure_silence_is_spoken_by_the_local_voice(monkeypatch: pytest.MonkeyPatch) -> None:
     tts = azure_that(monkeypatch, [None])
     assert any(isinstance(f, TTSAudioRawFrame) for f in await spoken(tts))
+
+
+async def test_azure_is_skipped_after_failing_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    tries = 0
+
+    async def failing(self: Any, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
+        nonlocal tries
+        tries += 1
+        yield ErrorFrame(error="401 invalid key")
+
+    tts = azure_that(monkeypatch, [])
+    monkeypatch.setattr(AzureTTSService, "run_tts", failing)
+    for _ in range(3):
+        assert any(isinstance(f, TTSAudioRawFrame) for f in await spoken(tts))
+    assert tries == 2  # the third sentence went straight to the local voice
+    assert tts.served_locally == 3
 
 
 async def test_healthy_azure_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
