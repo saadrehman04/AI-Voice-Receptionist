@@ -6,15 +6,19 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: whatsapp-sim help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
+.PHONY: dev whatsapp-sim help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install Python + web deps, create .env from .env.example if missing
+install: ## Install Python + web deps; first time, create .env with fresh local secrets
 	uv sync --all-packages
 	$(WEB) install --frozen-lockfile
-	@test -f .env || (cp .env.example .env && echo "created .env from .env.example - fill in your keys")
+	@test -f .env || (sed \
+	    -e "s/^JWT_SECRET=$$/JWT_SECRET=$$(openssl rand -hex 32)/" \
+	    -e "s/^AGENT_API_TOKEN=$$/AGENT_API_TOKEN=$$(openssl rand -hex 32)/" \
+	    -e "s/^BOOKING_BACKEND=memory$$/BOOKING_BACKEND=api/" .env.example > .env \
+	  && echo "created .env with fresh local secrets. Add GROQ_API_KEY (free, console.groq.com) for full answers; without it callers can still leave a message.")
 
 up: ## Start Postgres + Redis and wait until healthy
 	docker compose up -d --wait
@@ -51,6 +55,9 @@ api: ## Run the FastAPI backend (auto-reload in dev)
 
 web: ## Run the Next.js dev server on :3000
 	$(WEB) dev
+
+dev: ## Run api, worker, agent and dashboard together (Ctrl+C stops all); dashboard on :3000
+	$(MAKE) -j4 api worker agent web
 
 test: ## Run all tests (fast; no model downloads, no network)
 	$(UV_RUN) pytest

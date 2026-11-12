@@ -43,7 +43,8 @@ Progress is tracked in docs/PROGRESS.md.
 
 ## Commands
 Run from the repo root. `make help` lists everything.
-- `make install`: `uv sync --all-packages` + `pnpm install` in apps/web; creates .env from .env.example if missing
+- `make install`: `uv sync --all-packages` + `pnpm install` in apps/web; first time, creates .env from .env.example with fresh JWT_SECRET / AGENT_API_TOKEN and BOOKING_BACKEND=api
+- `make dev`: api + worker + agent + web together (`make -j4`); the three-command quick start is `make install`, `make up migrate`, `make dev`
 - `make up` / `make down` / `make logs`: Postgres 16 + Redis 7 via docker compose (`up` waits for healthchecks)
 - `make agent`: voice agent on :7860 (`uv run --all-packages python -m receptionist_agent`); talk at http://localhost:7860/client. Must run as `python -m` (Pipecat's runner finds `bot` on `__main__`)
 - `make chat`: text chat with the receptionist (real LLM + tools, stub bookings; `ARGS="--tenant demo-workshop"`); needs GROQ_API_KEY
@@ -59,6 +60,7 @@ Run from the repo root. `make help` lists everything.
 - Single test: `uv run --all-packages pytest apps/api/tests/test_health.py -k ok`
 - `make lint`: ruff check, ruff format --check, mypy (strict), eslint, `next typegen && tsc --noEmit`
 - `make fmt`: ruff --fix + ruff format
+- Failure drills (Phase 9): `.claude/launch.json` has `agent-sim-no-groq`, `agent-sim-no-azure`, `agent-sim-no-llm` (agent with that key revoked, pointed at the WhatsApp simulator); call it with `make whatsapp-sim`
 - `make whatsapp-sim`: call the agent over a simulated WhatsApp (fake Meta; `ARGS='--say "..." --say "..."'`). Start the agent with `WHATSAPP_GRAPH_URL=http://127.0.0.1:7870/v23.0 make agent`; see docs/WHATSAPP.md
 - `make evals`: simulated-caller eval suite (placeholder until Phase 6)
 - Add a Python dependency: `uv add --package receptionist-api <pkg>` (or receptionist-agent / receptionist-shared)

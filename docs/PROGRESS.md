@@ -11,7 +11,7 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - [x] Phase 6: Simulated-caller eval suite
 - [x] Phase 7: Owner dashboard and onboarding
 - [ ] Phase 8: WhatsApp calling
-- [ ] Phase 9: Hardening and portfolio write-up
+- [x] Phase 9: Hardening and portfolio write-up
 
 ## Notes per phase
 (Claude adds 2-4 lines here at the end of each phase: what was built, anything left open.)
@@ -110,3 +110,20 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
   browser pane blocks the microphone, so a spoken test-call conversation is still the owner's
   to try; Google Calendar connect is tested with the fake calendar only.
 
+
+### Phase 9 (hardening and portfolio write-up): done 2026-11-12
+- Failure handling (D37): LLM per-target timeouts, one retry, rejected keys skipped, then a
+  scripted receptionist that takes a message (and confirms a read-back the caller said yes to);
+  Groq STT retry then local Whisper (base, preloaded); Azure then local Piper; "One moment" on
+  slow replies; a guard that apologises if any error still reaches the call. Missing keys pick
+  the fallback at start-up. Per-business limits and usage (D38): calls/hour, minutes/month,
+  bookings and messages/hour, a usage meter on Analytics.
+- Security pass: secrets masked in every log line, repo secret scan in CI, 3 new injection
+  scenarios (7 total: 6/7 first run, then no failures after the fix it found), SECURITY.md.
+- Verified live by revoking each key (WhatsApp simulator, real agent): Azure revoked -> booked
+  with Piper; Groq revoked -> local Whisper + Gemini to the read-back, message when Gemini was
+  out too; no LLM -> message taken, polite hang-up. Each drill found a bug, fixed.
+- Write-up: README (3-command start: `make install`, `make up migrate`, `make dev`),
+  CASE_STUDY.md. Open: demo video and pilot numbers ([TODO] in both); with only Gemini left,
+  local Whisper's digit errors can stop a booking (the tool refuses a bad number, no wrong
+  booking).
