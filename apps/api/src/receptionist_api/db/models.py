@@ -58,6 +58,9 @@ class Tenant(TimestampMixin, Base):
     config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # validated TenantConfig
     # = config.whatsapp_phone_number_id; unique so a WhatsApp call maps to one business
     whatsapp_phone_number_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # Per-business limits (Phase 9); None = the defaults in Settings. Not owner-editable.
+    calls_per_hour_limit: Mapped[int | None] = mapped_column(Integer)
+    monthly_minutes_limit: Mapped[int | None] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 

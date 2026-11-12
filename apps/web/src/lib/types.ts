@@ -164,6 +164,16 @@ export interface Stats {
   after_hours: number;
 }
 
+/** This month's usage against the business's limits (GET /v1/dashboard/usage, Phase 9). */
+export interface Usage {
+  month: string; // "2026-11"
+  calls: number;
+  minutes: number;
+  monthly_minutes_limit: number;
+  calls_this_hour: number;
+  calls_per_hour_limit: number;
+}
+
 export interface DraftService {
   name: string;
   price: string | number | null;

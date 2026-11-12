@@ -123,6 +123,14 @@ class Settings(BaseSettings):
     embeddings_enabled: bool = True
     embeddings_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
+    # --- per-business limits (Phase 9, DECISIONS D38) ---
+    # Defaults for every business; a tenant row can override the first two. Over a call limit
+    # the caller hears who to call instead; over a tool limit the agent offers a message.
+    tenant_calls_per_hour: int = Field(default=30, ge=1)
+    tenant_monthly_minutes: int = Field(default=1000, ge=1)
+    tenant_bookings_per_hour: int = Field(default=20, ge=1)
+    tenant_messages_per_hour: int = Field(default=60, ge=1)
+
     # --- call recording (phase 4) ---
     record_calls: bool = False  # callers hear a recording + AI disclosure when on
     storage_dir: str = "storage"  # recordings: <storage_dir>/<tenant>/<call_id>.wav

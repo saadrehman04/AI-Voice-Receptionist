@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   callerLabel,
   formatDateTime,
+  usageLevel,
   formatDay,
   formatDuration,
   formatMs,
@@ -45,5 +46,14 @@ describe("format", () => {
   it("labels outcomes for owners", () => {
     expect(outcomeLabel("booked")).toBe("Booked");
     expect(outcomeLabel(null)).toBe("Summarising…");
+  });
+});
+
+describe("usageLevel", () => {
+  it("says where a business is against its monthly minutes", () => {
+    expect(usageLevel(100, 1000)).toMatchObject({ share: 0.1, level: "ok" });
+    expect(usageLevel(850, 1000).level).toBe("near");
+    expect(usageLevel(1000, 1000)).toMatchObject({ share: 1, level: "over" });
+    expect(usageLevel(1500, 1000).share).toBe(1); // the meter never overflows
   });
 });

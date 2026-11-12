@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, time
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -144,6 +145,13 @@ class CallEnd(_Model):
     recording_path: str | None = None
 
 
+class Admission(_Model):
+    """May a business take one more call now? (Phase 9 limits; reason when it may not)."""
+
+    allowed: bool
+    reason: Literal["calls_per_hour", "monthly_minutes"] | None = None
+
+
 class ApiError(_Model):
     """Body of every 4xx the tool endpoints return; `code` is stable, `detail` is for humans."""
 
@@ -152,6 +160,7 @@ class ApiError(_Model):
 
 
 __all__ = [
+    "Admission",
     "ApiError",
     "AvailabilityRequest",
     "AvailabilityResponse",

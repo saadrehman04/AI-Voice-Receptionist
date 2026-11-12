@@ -47,3 +47,15 @@ def test_recording_disclosure_comes_first(salon: TenantConfig, workshop: TenantC
     )
     assert greeting(workshop, recording=True).startswith("یہ کال ریکارڈ ہو سکتی ہے")
     assert "recorded" not in greeting(salon)
+
+
+def test_busy_line_names_who_to_call_from_the_config_only(salon: TenantConfig) -> None:
+    """Said instead of the greeting when the business is over its call limits (D38)."""
+    from receptionist_agent.brain.prompt import busy_line
+
+    line = busy_line(salon)
+    assert salon.business_name in line
+    assert salon.handoff.name.split(" (")[0] in line
+    assert "zero three zero zero" in line  # the number is spelled out digit by digit
+    urdu = busy_line(salon.model_copy(update={"default_language": "ur"}))
+    assert "خدا حافظ" in urdu

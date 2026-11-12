@@ -34,6 +34,7 @@ from receptionist_api.knowledge_base import KnowledgeBase, make_embedder
 from receptionist_api.ratelimit import RateLimiter
 from receptionist_api.routes import agent_tools, owners, setup
 from receptionist_api.tenants import TenantRegistry, TenantStore
+from receptionist_api.usage import Limits, UsageService
 from receptionist_api.website_draft import (
     Drafter,
     LlmDrafter,
@@ -70,6 +71,10 @@ class Resources:
     draft_limiter: RateLimiter | None = None
     web_client: httpx.AsyncClient | None = None  # fetches owners' websites
     storage_dir: Path = Path("storage")
+    # Phase 9: per-business limits (None = no limits, e.g. in tests that don't exercise them).
+    usage: UsageService | None = None
+    booking_limiter: RateLimiter | None = None
+    message_limiter: RateLimiter | None = None
 
     async def close(self) -> None:
         for close in reversed(self.closers):
@@ -159,6 +164,17 @@ async def build_resources(settings: Settings) -> Resources:
         calendar_account=calendar_account,
         drafter=LlmDrafter(endpoints, web_client) if endpoints else None,
         draft_limiter=RateLimiter(redis, prefix="draft", limit=20, window_secs=3600),
+        usage=UsageService(
+            sessions,
+            redis,
+            Limits(settings.tenant_calls_per_hour, settings.tenant_monthly_minutes),
+        ),
+        booking_limiter=RateLimiter(
+            redis, prefix="bookings", limit=settings.tenant_bookings_per_hour, window_secs=3600
+        ),
+        message_limiter=RateLimiter(
+            redis, prefix="messages", limit=settings.tenant_messages_per_hour, window_secs=3600
+        ),
         web_client=web_client,
         storage_dir=Path(settings.storage_dir),
     )

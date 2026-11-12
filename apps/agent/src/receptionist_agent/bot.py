@@ -29,7 +29,7 @@ from typing import Any
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import EndWorkerFrame, TTSSpeakFrame
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.service_switcher import ServiceSwitcher
@@ -48,7 +48,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from receptionist_agent.brain.api_backend import ApiBackend
 from receptionist_agent.brain.backend import BookingBackend, InMemoryBackend
-from receptionist_agent.brain.prompt import build_system_prompt, greeting
+from receptionist_agent.brain.prompt import build_system_prompt, busy_line, greeting
 from receptionist_agent.brain.state import CallState
 from receptionist_agent.brain.tools import (
     ReceptionistTools,
@@ -77,6 +77,7 @@ from receptionist_agent.records import (
 from receptionist_agent.timing import JsonlTurnWriter, TurnTimingObserver
 from receptionist_agent.tracing import configure_tracing, record_turn_span
 from receptionist_shared import Settings, get_settings
+from receptionist_shared.api_models import Admission
 from receptionist_shared.tenant import TenantConfig, load_tenant_by_slug
 
 _backend: BookingBackend | None = None
@@ -111,6 +112,7 @@ class Call:
     recording_path: Path | None = None
     flags: LatencyFlags = field(default_factory=LatencyFlags)
     tracing: bool = False  # OpenTelemetry spans for this call (OTEL_ENABLED)
+    admission: Admission = field(default_factory=lambda: Admission(allowed=True))
 
 
 def make_recorder(
@@ -240,7 +242,7 @@ def prepare_call(
     `now` freezes the clock (evals); `on_tool_call` also sees every tool call (evals, tests).
     """
     backend = backend or default_backend(settings)
-    tenant = load_tenant(settings, tenant_slug or settings.default_tenant, backend)
+    tenant, admission = load_tenant(settings, tenant_slug or settings.default_tenant, backend)
     frozen = now.astimezone(tenant.tz) if now is not None else None
     prompt = build_system_prompt(tenant, frozen or tenant.now())
     services = build_services(settings, prompt, urdu="ur" in tenant.languages)
@@ -273,6 +275,7 @@ def prepare_call(
         recorder=recorder,
         flags=LatencyFlags.from_settings(settings),
         tracing=configure_tracing(settings),
+        admission=admission,
     )
     if settings.record_calls:
         # Stereo: caller on the left channel, agent on the right. Written once at hang-up.
@@ -281,20 +284,24 @@ def prepare_call(
     return call
 
 
-def load_tenant(settings: Settings, slug: str, backend: BookingBackend) -> TenantConfig:
-    """From the api when we have one (tenants can be created there); else from YAML."""
+def load_tenant(
+    settings: Settings, slug: str, backend: BookingBackend
+) -> tuple[TenantConfig, Admission]:
+    """From the api when we have one (tenants can be created there, and it knows the business's
+    call limits); else from YAML, with no limits."""
     if isinstance(backend, ApiBackend):
         return asyncio.run(_fetch_tenant(settings, slug))
-    return load_tenant_by_slug(slug, Path(settings.tenants_dir))
+    return load_tenant_by_slug(slug, Path(settings.tenants_dir)), Admission(allowed=True)
 
 
-async def _fetch_tenant(settings: Settings, slug: str) -> TenantConfig:
+async def _fetch_tenant(settings: Settings, slug: str) -> tuple[TenantConfig, Admission]:
     # A short-lived client: this runs in prepare_call's worker thread, with its own event loop.
     if settings.agent_api_token is None:
         raise RuntimeError("BOOKING_BACKEND=api needs AGENT_API_TOKEN")
     api = ApiBackend(settings.api_base_url, settings.agent_api_token.get_secret_value())
     try:
-        return await api.tenant_config(slug)
+        tenant = await api.tenant_config(slug)
+        return tenant, await api.admit_call(tenant)
     finally:
         await api.aclose()
 
@@ -363,6 +370,13 @@ async def run_bot(
 
         async def on_client_connected(_transport: BaseTransport, _client: Any) -> None:
             logger.info("caller connected", tenant=call.tenant.slug)
+            if not call.admission.allowed:
+                # Over its limits (D38): say who to call instead, then hang up politely.
+                logger.warning("over the call limit", reason=call.admission.reason)
+                await task.queue_frames(
+                    [TTSSpeakFrame(busy_line(call.tenant)), EndWorkerFrame(reason="limit")]
+                )
+                return
             hello = greeting(call.tenant, recording=call.recording is not None)
             await task.queue_frames([TTSSpeakFrame(hello)])
 

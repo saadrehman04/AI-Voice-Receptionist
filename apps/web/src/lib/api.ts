@@ -12,6 +12,7 @@ import type {
   Message,
   Stats,
   TenantConfig,
+  Usage,
 } from "./types";
 
 // Server-side client for the FastAPI app. Only the Next.js server talks to the API, so the
@@ -95,6 +96,7 @@ export const dashboard = {
       body: JSON.stringify({ status }),
     }),
   stats: (days = 7) => owner<Stats>(`/stats?days=${days}`),
+  usage: () => owner<Usage>("/usage"),
   settings: () => owner<TenantConfig>("/settings"),
   saveSettings: (config: TenantConfig) =>
     owner<TenantConfig>("/settings", { method: "PUT", body: JSON.stringify(config) }),

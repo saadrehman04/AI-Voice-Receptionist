@@ -5,6 +5,7 @@ Reuses the api test fixtures (real database, fake calendar), so it is skipped wh
 """
 
 from datetime import datetime
+from typing import Any
 
 import httpx
 import pytest
@@ -134,3 +135,23 @@ async def test_call_is_recorded_and_summarised_end_to_end(
     assert [t.speaker for t in detail.turns] == ["agent", "caller", "agent"]
     assert detail.turns[2].timings == {"total": 700.0}
     assert detail.tool_calls[0].name == "take_message"
+
+
+async def test_admission_through_the_api(
+    api: httpx.AsyncClient, salon: TenantConfig, resources: Any, redis: Any
+) -> None:
+    """Phase 9 (D38): the agent asks before answering; over the limit it is told no."""
+    from receptionist_api.usage import Limits, UsageService
+
+    resources.usage = UsageService(resources.bookings._sessions, redis, Limits(1, 1000))
+    backend = ApiBackend("http://api", TOKEN, client=api)
+    assert (await backend.admit_call(salon)).allowed
+    refused = await backend.admit_call(salon)
+    assert (refused.allowed, refused.reason) == (False, "calls_per_hour")
+
+
+async def test_admission_fails_open_when_the_api_is_down(salon: TenantConfig) -> None:
+    down = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(503)), base_url="http://api"
+    )
+    assert (await ApiBackend("http://api", TOKEN, client=down).admit_call(salon)).allowed

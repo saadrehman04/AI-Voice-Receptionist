@@ -26,6 +26,7 @@ from receptionist_api.tenants import (
     TenantStore,
     WhatsAppNumberTakenError,
 )
+from receptionist_api.usage import Usage, UsageService
 from receptionist_shared.tenant import TenantConfig
 
 auth_router = APIRouter(prefix="/v1", tags=["owners"])
@@ -412,6 +413,18 @@ async def stats(
         booking_rate=round(by_outcome.get("booked", 0) / ended, 3) if ended else None,
         after_hours=after_hours,
     )
+
+
+@dashboard.get("/usage", response_model=Usage)
+async def usage(owner: OwnerDep, store: StoreDep, request: Request) -> Usage:
+    """This month's calls and minutes against the business's limits (Phase 9)."""
+    tenant = store.registry.get(owner.tenant_slug)
+    if tenant is None:
+        raise _error(404, "tenant_not_found", owner.tenant_slug)
+    service: UsageService | None = request.app.state.resources.usage
+    if service is None:
+        raise _error(503, "usage_disabled", "usage counters are not configured")
+    return await service.usage(owner.tenant_id, tenant.timezone)
 
 
 @dashboard.get("/settings", response_model=TenantConfig)

@@ -94,3 +94,16 @@ export const STAGES: { key: string; label: string }[] = [
   { key: "tts", label: "Voice first audio" },
   { key: "total", label: "Caller stops → agent speaks" },
 ];
+
+/** How far through its monthly minutes a business is: the meter's fill and what to say. */
+export function usageLevel(minutes: number, limit: number): {
+  share: number;
+  level: "ok" | "near" | "over";
+  label: string;
+} {
+  const share = limit > 0 ? Math.min(1, minutes / limit) : 1;
+  if (minutes >= limit)
+    return { share, level: "over", label: "Limit reached: callers are told who to call instead" };
+  if (share >= 0.8) return { share, level: "near", label: "Close to this month's limit" };
+  return { share, level: "ok", label: "Within this month's limit" };
+}

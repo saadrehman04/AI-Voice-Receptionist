@@ -13,6 +13,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 import httpx
+from loguru import logger
 from pydantic import TypeAdapter
 
 from receptionist_agent.brain.backend import (
@@ -23,6 +24,7 @@ from receptionist_agent.brain.backend import (
     UnknownServiceError,
 )
 from receptionist_shared.api_models import (
+    Admission,
     AvailabilityRequest,
     AvailabilityResponse,
     BookingCreate,
@@ -214,6 +216,15 @@ class ApiBackend:
     async def record(self, tenant: TenantConfig, path: str, body: dict[str, Any]) -> None:
         """Send one call record (see records.py). `path` is relative to /calls."""
         await self._call("POST", tenant.slug, f"/calls{path}", json=body)
+
+    async def admit_call(self, tenant: TenantConfig) -> Admission:
+        """Is the business within its call limits (D38)? Unreachable api: let the call in."""
+        try:
+            data = await self._call("POST", tenant.slug, "/calls/admit")
+        except BackendUnavailableError as exc:
+            logger.warning("admission check failed; taking the call", error=str(exc))
+            return Admission(allowed=True)
+        return Admission.model_validate(data)
 
     async def tenant_config(self, slug: str) -> TenantConfig:
         return TenantConfig.model_validate(await self._call("GET", slug, "/config"))

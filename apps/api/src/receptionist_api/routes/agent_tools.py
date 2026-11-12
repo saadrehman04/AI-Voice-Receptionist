@@ -2,7 +2,8 @@
 requires the shared agent token (`X-Agent-Token`).
 
 Errors use stable codes so the agent can react: `tenant_not_found` (404), `unknown_service`
-(422), `slot_taken` (409), `booking_not_found` (404), `calendar_unavailable` (503).
+(422), `slot_taken` (409), `booking_not_found` (404), `calendar_unavailable` (503),
+`rate_limited` (429: this business made too many bookings or messages this hour, D38).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from loguru import logger
 from pydantic import BaseModel
 
 from receptionist_api.booking_service import (
@@ -24,9 +26,12 @@ from receptionist_api.calendar import CalendarError
 from receptionist_api.calls import CallNotFoundError, CallRecords
 from receptionist_api.jobs import JobQueue
 from receptionist_api.knowledge_base import KnowledgeBase
+from receptionist_api.ratelimit import RateLimiter
 from receptionist_api.tenants import TenantRegistry
+from receptionist_api.usage import UsageService
 from receptionist_api.worker import SUMMARIZE_CALL
 from receptionist_shared.api_models import (
+    Admission,
     AvailabilityRequest,
     AvailabilityResponse,
     BookingCreate,
@@ -123,10 +128,18 @@ async def hold(req: HoldRequest, tenant: TenantDep, bookings: BookingsDep) -> Ho
     return HoldResponse(held=held, expires_in_secs=bookings.hold_secs if held else 0)
 
 
+async def _within(request: Request, tenant: TenantConfig, limiter_name: str) -> None:
+    """Per-business cap on writes, so a looping or manipulated agent can't flood a calendar."""
+    limiter: RateLimiter | None = getattr(request.app.state.resources, limiter_name)
+    if limiter is not None and not await limiter.allow(tenant.slug):
+        raise _error(429, "rate_limited", f"too many requests for {tenant.slug} this hour")
+
+
 @router.post("/bookings", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
 async def create_booking(
-    req: BookingCreate, tenant: TenantDep, bookings: BookingsDep
+    req: BookingCreate, tenant: TenantDep, bookings: BookingsDep, request: Request
 ) -> BookingOut:
+    await _within(request, tenant, "booking_limiter")
     try:
         return await bookings.create(tenant, req)
     except (SlotTakenError, UnknownServiceError, CalendarError) as exc:
@@ -163,8 +176,9 @@ async def cancel_booking(
 
 @router.post("/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED)
 async def create_message(
-    req: MessageCreate, tenant: TenantDep, bookings: BookingsDep
+    req: MessageCreate, tenant: TenantDep, bookings: BookingsDep, request: Request
 ) -> MessageOut:
+    await _within(request, tenant, "message_limiter")
     return MessageOut(id=await bookings.add_message(tenant, req))
 
 
@@ -198,6 +212,18 @@ def get_calls(request: Request) -> CallRecords:
 
 
 CallsDep = Annotated[CallRecords, Depends(get_calls)]
+
+
+@router.post("/calls/admit", response_model=Admission)
+async def admit_call(tenant: TenantDep, request: Request) -> Admission:
+    """Asked by the agent before it answers: is this business within its call limits? (D38)"""
+    usage: UsageService | None = request.app.state.resources.usage
+    if usage is None:
+        return Admission(allowed=True)
+    admission = await usage.admit(_tenant_id(request, tenant), tenant.timezone)
+    if not admission.allowed:
+        logger.warning("call refused by limit", tenant=tenant.slug, reason=admission.reason)
+    return admission
 
 
 @router.post("/calls", status_code=status.HTTP_201_CREATED)

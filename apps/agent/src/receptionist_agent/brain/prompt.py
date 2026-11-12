@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from receptionist_shared.knowledge import describe_hours, describe_service
+from receptionist_shared.phone import normalize_pk_phone, spoken_digits_en, spoken_digits_ur
 from receptionist_shared.tenant import TenantConfig
 
 LANGUAGE_NAMES = {"en": "English", "ur": "Urdu"}
@@ -131,3 +132,24 @@ def greeting(tenant: TenantConfig, *, recording: bool = False) -> str:
     if recording:
         text = f"{DISCLOSURE['ur' if urdu else 'en']} {text}"
     return text
+
+
+def busy_line(tenant: TenantConfig) -> str:
+    """Said instead of the greeting when the business is over its call limits (D38).
+
+    Only facts from the tenant's config: its name and its hand-off contact.
+    """
+    phone = normalize_pk_phone(tenant.handoff.phone)
+    who = tenant.handoff.name.split(" (")[0]
+    if tenant.default_language == "ur" and tenant.greeting.ur:
+        name = tenant.business_name_ur or tenant.business_name
+        number = spoken_digits_ur(phone) if phone else tenant.handoff.phone
+        return (
+            f"{name} میں فون کرنے کا شکریہ۔ اس وقت ہم مزید کالیں نہیں لے سکتے۔ "
+            f"براہِ کرم {who} کو اس نمبر پر کال کریں: {number}۔ خدا حافظ۔"
+        )
+    number = spoken_digits_en(phone) if phone else tenant.handoff.phone
+    return (
+        f"Thank you for calling {tenant.business_name}. We can't take any more calls right now. "
+        f"Please call {who} on {number}. Goodbye."
+    )

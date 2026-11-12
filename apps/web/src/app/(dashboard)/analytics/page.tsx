@@ -3,7 +3,8 @@ import { Suspense } from "react";
 
 import { Card, CardTitle, PageHeader, Skeleton, cx } from "@/components/ui";
 import { dashboard } from "@/lib/api";
-import { STAGES, formatMs, formatPercent, outcomeLabel } from "@/lib/format";
+import { STAGES, formatMs, formatPercent, outcomeLabel, usageLevel } from "@/lib/format";
+import type { Usage } from "@/lib/types";
 
 import { CallsChart } from "./calls-chart";
 
@@ -21,10 +22,54 @@ function Tile({ label, value, hint }: { label: string; value: string; hint: stri
   );
 }
 
+const LEVEL = {
+  ok: { bar: "#059669", icon: "✓" },
+  near: { bar: "#d97706", icon: "!" },
+  over: { bar: "#dc2626", icon: "✕" },
+} as const;
+
+function UsageCard({ usage }: { usage: Usage }) {
+  const { share, level, label } = usageLevel(usage.minutes, usage.monthly_minutes_limit);
+  const month = new Date(`${usage.month}-01T00:00:00`).toLocaleString("en-GB", { month: "long" });
+  return (
+    <Card className="mt-4">
+      <CardTitle hint="Your plan's limits. Over a limit, callers hear who to call instead of being cut off.">
+        Usage in {month}
+      </CardTitle>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+        <span>
+          <span className="text-2xl font-semibold tabular-nums">{Math.round(usage.minutes)}</span>
+          <span className="text-zinc-600 dark:text-zinc-400"> of {usage.monthly_minutes_limit} minutes</span>
+        </span>
+        <span className="tabular-nums text-zinc-600 dark:text-zinc-400">
+          {usage.calls} calls this month · {usage.calls_this_hour} of {usage.calls_per_hour_limit} this hour
+        </span>
+      </div>
+      <div
+        role="meter"
+        aria-label="Minutes used this month"
+        aria-valuemin={0}
+        aria-valuemax={usage.monthly_minutes_limit}
+        aria-valuenow={Math.round(usage.minutes)}
+        className="mt-2 h-2 rounded-full bg-zinc-100 dark:bg-zinc-800"
+      >
+        <div className="h-2 rounded-full" style={{ width: `${Math.max(share * 100, 1)}%`, background: LEVEL[level].bar }} />
+      </div>
+      <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <span aria-hidden="true">{LEVEL[level].icon} </span>
+        {label}
+      </p>
+    </Card>
+  );
+}
+
 async function Report({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
   const { days: raw } = await searchParams;
   const days = RANGES.includes(Number(raw)) ? Number(raw) : 7;
-  const stats = await dashboard.stats(days);
+  const [stats, usage] = await Promise.all([
+    dashboard.stats(days),
+    dashboard.usage().catch(() => null), // an API without usage counters: skip the card
+  ]);
   const outcomes = Object.entries(stats.by_outcome).sort((a, b) => b[1] - a[1]);
   const top = Math.max(1, ...outcomes.map(([, n]) => n));
   const booked = stats.by_outcome.booked ?? 0;
@@ -61,6 +106,7 @@ async function Report({ searchParams }: { searchParams: Promise<{ days?: string 
           hint="answered while you were closed"
         />
       </div>
+      {usage ? <UsageCard usage={usage} /> : null}
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardTitle hint="Hover or tab to a day for its numbers.">Calls per day</CardTitle>
