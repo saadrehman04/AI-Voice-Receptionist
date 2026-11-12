@@ -79,7 +79,7 @@ def test_after_the_ask_the_callers_words_become_a_message() -> None:
     assert call["function"]["name"] == "take_message"
     args = json.loads(call["function"]["arguments"])
     assert args == {
-        "message": "Sara Ahmed, 0321 555 0101, please call me back",
+        "message": "haircut? / Sara Ahmed, 0321 555 0101, please call me back",
         "phone": "+923215550101",
     }
 
@@ -100,6 +100,66 @@ def test_a_saved_message_gets_thanks_and_a_hang_up_an_unsaved_one_an_honest_apol
     assert text == degraded.NOT_SAVED["en"]
 
 
+def read_back_turns() -> list[dict[str, Any]]:
+    args = {"service": "Haircut", "start": "2026-11-19T16:00:00+05:00", "caller_confirmed": False}
+    call = {
+        "id": "call_7",
+        "type": "function",
+        "function": {"name": "create_booking", "arguments": json.dumps(args)},
+    }
+    result = {"ok": True, "booked": False, "read_back": {"when": "Thursday 19 November, 4:00 PM"}}
+    return [
+        user("Haircut Thursday 4 pm, Sara, 0321 5550101"),
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "call_7", "content": json.dumps(result)},
+    ]
+
+
+def test_a_plain_yes_to_a_read_back_is_committed_without_the_llm() -> None:
+    """Seen live: the LLM went down between the read-back and the caller's 'Yes, please'."""
+    text, calls = degraded.plan(body(*read_back_turns(), user("Yes, please.")))
+    assert text is None
+    (call,) = calls
+    assert call["function"]["name"] == "create_booking"
+    assert json.loads(call["function"]["arguments"])["caller_confirmed"] is True
+    assert call["id"].startswith(degraded.CONFIRM_CALL_PREFIX)
+
+
+def test_anything_but_a_plain_yes_goes_to_a_message() -> None:
+    for answer in ("No, make it 5 pm", "Yes but on Friday", "What time was that?"):
+        text, calls = degraded.plan(body(*read_back_turns(), user(answer)))
+        assert (text, calls) == (degraded.ASK["en"], []), answer
+
+
+def test_the_committed_booking_is_confirmed_from_the_tool_result() -> None:
+    turns = [*read_back_turns(), user("جی ہاں")]
+    _, (call,) = degraded.plan(body(*turns))
+    done = {
+        "ok": True,
+        "booked": True,
+        "booking_id": "AB12",
+        "service": "Haircut",
+        "when": "Thu 4 PM",
+    }
+    turns += [
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(done)},
+    ]
+    text, calls = degraded.plan(body(*turns))
+    assert text is not None and "A B 1 2" in text and "Haircut" in text
+    assert "خدا حافظ" in text  # the caller said yes in Urdu
+    assert [c["function"]["name"] for c in calls] == ["end_call"]
+    failed = {"role": "tool", "tool_call_id": call["id"], "content": json.dumps({"ok": False})}
+    assert degraded.plan(body(*turns[:-1], failed))[0] == degraded.ASK["ur"]
+
+
+def test_the_message_carries_the_whole_request() -> None:
+    asked = {"role": "assistant", "content": degraded.ASK["en"]}
+    _, (call,) = degraded.plan(body(user("A facial on Friday?"), asked, user("Sara, 0321 5550101")))
+    message = json.loads(call["function"]["arguments"])["message"]
+    assert message == "A facial on Friday? / Sara, 0321 5550101"
+
+
 def test_an_interrupted_ask_still_counts() -> None:
     cut = {"role": "assistant", "content": degraded.ASK["en"][:40]}
     _, calls = degraded.plan(body(user("hi"), cut, user("Call me back please")))
@@ -112,6 +172,7 @@ def test_an_interrupted_ask_still_counts() -> None:
         ("my number is 0321-5550101", "+923215550101"),
         ("\u06f0\u06f3\u06f2\u06f1 \u06f5\u06f5\u06f5 \u06f0\u06f1\u06f0\u06f1", "+923215550101"),
         ("call me at 4 pm", None),
+        ("and my number is 0-3-2-1-5,550,101.", "+923215550101"),  # Whisper, seen live
     ],
 )
 def test_find_phone(text: str, phone: str | None) -> None:
@@ -133,6 +194,22 @@ def transport(handler: Any, targets: list[Any], **kw: Any) -> httpx2.AsyncClient
         targets, inner=httpx2.MockTransport(handler), budgets=BudgetBook(), degrade=True, **kw
     )
     return httpx2.AsyncClient(transport=t)
+
+
+async def test_a_rejected_key_is_not_asked_again_on_the_next_turn() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        if "gpt-oss" in model:
+            return httpx2.Response(401, json={"error": {"message": "invalid api key"}})
+        return httpx2.Response(200, json={"served": model})
+
+    async with transport(handler, [BIG, GEMINI]) as client:
+        await client.post(GROQ_CHAT_URL, json=body(user("hi")))
+        await client.post(GROQ_CHAT_URL, json=body(user("again")))
+    assert seen == ["openai/gpt-oss-120b", "gemini-3.5-flash-lite", "gemini-3.5-flash-lite"]
 
 
 async def test_rejected_keys_end_in_the_message_taker_not_an_error() -> None:

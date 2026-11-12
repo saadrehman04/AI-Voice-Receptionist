@@ -28,6 +28,7 @@ from receptionist_agent.providers import (  # noqa: E402
     ProviderConfigError,
     build_llm,
     describe_providers,
+    stt_provider,
 )
 
 __all__ = ["bot", "main"]
@@ -48,6 +49,11 @@ def main() -> None:
         logger.error(str(exc))
         raise SystemExit(2) from exc
     logger.info("default tenant loaded", tenant=tenant.slug, languages=tenant.languages)
+    if stt_provider(settings) == "groq":
+        # The local Whisper that takes over if Groq fails: load it now, not mid-call (D37).
+        from receptionist_agent.local_stt import preload
+
+        preload(settings.stt_fallback_model)
 
     from pipecat.runner.run import app as runner_app
     from pipecat.runner.run import main as run_pipecat_runner

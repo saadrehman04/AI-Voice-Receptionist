@@ -230,6 +230,7 @@ class _Budget:
     """
 
     ready_at: float = 0.0  # monotonic time before which we skip this target
+    rejected_until: float = 0.0  # its key was refused (401/403): leave it out until then
     remaining_tokens: float | None = None
     limit_tokens: float | None = None  # None: provider didn't say; assume no refill until reset
     noted_at: float = 0.0
@@ -323,16 +324,18 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         return available is None or available >= tokens
 
     def order(self, body: Mapping[str, Any]) -> list[LlmTarget]:
-        """Targets to try: usable ones in configured order, then the rest by soonest ready."""
+        """Targets to try: usable ones in configured order, then the rest by soonest ready.
+        A target whose key was just refused is left out: asking again can't help."""
         now, tokens = self._clock(), self._estimate_tokens(body)
-        ready = [t for t in self.targets if self._usable_now(t, tokens, now)]
+        live = [t for t in self.targets if now >= self._budgets[t].rejected_until]
+        ready = [t for t in live if self._usable_now(t, tokens, now)]
         if self.simple_target is not None and is_simple_turn(body):
             ready.sort(key=lambda t: t.name != self.simple_target)  # stable: rest keep order
 
         def ready_at(t: LlmTarget) -> float:
             return self._budgets[t].enough_at(tokens)
 
-        return ready + sorted((t for t in self.targets if t not in ready), key=ready_at)
+        return ready + sorted((t for t in live if t not in ready), key=ready_at)
 
     # ------------------------------------------------------------ bookkeeping
 
@@ -412,7 +415,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
             )
             return _Failure("busy" if status == 429 else "passing", response)
         if status in (401, 403):
-            self._cool(target, REJECTED_KEY_COOLDOWN_SECS)
+            self._budgets[target].rejected_until = self._clock() + REJECTED_KEY_COOLDOWN_SECS
             logger.error(
                 "llm key rejected, skipping this target", target=target.name, status=status
             )

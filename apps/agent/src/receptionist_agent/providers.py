@@ -71,24 +71,23 @@ def stt_provider(settings: Settings) -> str:
     return settings.stt_provider
 
 
-def build_local_whisper(settings: Settings) -> STTService:
+def build_local_whisper(settings: Settings, model: str) -> STTService:
     from pipecat.services.whisper.stt import WhisperSTTService
 
     return WhisperSTTService(
         device="cpu",  # no NVIDIA GPU on the dev laptop
         compute_type="int8",
-        settings=WhisperSTTService.Settings(
-            model=settings.faster_whisper_model, language=stt_language(settings)
-        ),
+        settings=WhisperSTTService.Settings(model=model, language=stt_language(settings)),
     )
 
 
 def build_stt(settings: Settings) -> STTService:
     language = stt_language(settings)
+    if settings.stt_provider == "faster_whisper":
+        return build_local_whisper(settings, settings.faster_whisper_model)
     if stt_provider(settings) == "faster_whisper":
-        if settings.stt_provider != "faster_whisper":
-            logger.warning("GROQ_API_KEY is not set: speech-to-text runs locally (faster-whisper)")
-        return build_local_whisper(settings)
+        logger.warning("GROQ_API_KEY is not set: speech-to-text runs locally (faster-whisper)")
+        return build_local_whisper(settings, settings.stt_fallback_model)
     from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
 
     return AutoLanguageGroqSTTService(
@@ -96,7 +95,7 @@ def build_stt(settings: Settings) -> STTService:
         settings=AutoLanguageGroqSTTService.Settings(
             model=settings.groq_stt_model, language=language
         ),
-        local_fallback=LocalWhisper(settings.faster_whisper_model),
+        local_fallback=LocalWhisper(settings.stt_fallback_model),
     )
 
 

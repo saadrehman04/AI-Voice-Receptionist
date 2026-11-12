@@ -37,6 +37,43 @@
         "WHATSAPP_GRAPH_URL": "http://127.0.0.1:7870/v23.0"
       },
       "port": 7860
+    },
+    {
+      "name": "agent-sim-no-groq",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "agent"
+      ],
+      "env": {
+        "WHATSAPP_GRAPH_URL": "http://127.0.0.1:7870/v23.0",
+        "GROQ_API_KEY": "revoked-groq-key-phase9-test"
+      },
+      "port": 7860
+    },
+    {
+      "name": "agent-sim-no-azure",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "agent"
+      ],
+      "env": {
+        "WHATSAPP_GRAPH_URL": "http://127.0.0.1:7870/v23.0",
+        "AZURE_SPEECH_KEY": "revoked-azure-key-phase9-test"
+      },
+      "port": 7860
+    },
+    {
+      "name": "agent-sim-no-llm",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "agent"
+      ],
+      "env": {
+        "WHATSAPP_GRAPH_URL": "http://127.0.0.1:7870/v23.0",
+        "GROQ_API_KEY": "revoked-groq-key-phase9-test",
+        "GEMINI_API_KEY": "revoked-gemini-key-phase9-test"
+      },
+      "port": 7860
     }
   ]
 }

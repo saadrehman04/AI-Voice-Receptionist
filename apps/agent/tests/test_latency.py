@@ -160,6 +160,35 @@ async def test_no_filler_when_the_agent_already_spoke_or_the_tool_was_fast() -> 
     assert spoken(fast_tool) == []
 
 
+async def test_slow_llm_gets_one_filler_fast_or_empty_replies_none() -> None:
+    """Phase 9: a busy Groq hands the turn to Gemini (~4 s): "One moment" instead of silence."""
+    from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame
+
+    def slow() -> ToolFiller:
+        return ToolFiller(after_ms=100, language=lambda: "en", slow_reply_ms=100)
+
+    waited, _ = await run_test(
+        slow(),
+        frames_to_send=[
+            UserStoppedSpeakingFrame(),
+            LLMFullResponseStartFrame(),
+            SleepFrame(0.3),
+            FunctionCallsStartedFrame(function_calls=[]),  # then a tool call: no second filler
+            SleepFrame(0.3),
+        ],
+    )
+    fast, _ = await run_test(
+        slow(),
+        frames_to_send=[LLMFullResponseStartFrame(), LLMTextFrame("Sure."), SleepFrame(0.3)],
+    )
+    empty, _ = await run_test(
+        slow(),
+        frames_to_send=[LLMFullResponseStartFrame(), LLMFullResponseEndFrame(), SleepFrame(0.3)],
+    )
+    assert [f.text for f in spoken(waited)] == [FILLERS["en"]]
+    assert spoken(fast) == [] and spoken(empty) == []
+
+
 def test_flags_come_from_settings() -> None:
     flags = LatencyFlags.from_settings(
         Settings(_env_file=None, tts_text_chunking="full", filler_after_ms=0, vad_stop_secs=0.3)

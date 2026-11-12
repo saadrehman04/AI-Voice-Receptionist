@@ -50,18 +50,35 @@ def _model(name: str) -> Any:
         return _models[name]
 
 
+def preload(model: str) -> threading.Thread:
+    """Load a model in the background (agent start-up), so the first fallback isn't a 20 s wait
+    (measured live: loading on first use left the caller in silence that long)."""
+    thread = threading.Thread(target=_model, args=(model,), name=f"whisper-{model}", daemon=True)
+    thread.start()
+    return thread
+
+
 class LocalWhisper:
     def __init__(self, model: str) -> None:
         self.model = model
 
     async def transcribe(self, wav: bytes, language: str | None) -> tuple[str, str | None]:
-        def run() -> tuple[str, str | None]:
-            segments, info = _model(self.model).transcribe(wav_to_float(wav), language=language)
+        def once(audio: Any, lang: str | None) -> tuple[str, str | None]:
+            segments, info = _model(self.model).transcribe(audio, language=lang)
             # `segments` decodes lazily: consume it here, in the worker thread.
             text = " ".join(s.text.strip() for s in segments if s.no_speech_prob < 0.6)
             return text.strip(), getattr(info, "language", None)
 
+        def run() -> tuple[str, str | None]:
+            audio = wav_to_float(wav)
+            text, detected = once(audio, language)
+            if language is None and detected == "hi":
+                # Spoken Urdu and Hindi sound alike; Whisper then writes Devanagari, which the
+                # rest of the system can't read. This line only takes Urdu and English.
+                text, detected = once(audio, "ur")
+            return text, detected
+
         return await asyncio.to_thread(run)
 
 
-__all__ = ["LocalWhisper", "Transcriber", "wav_to_float"]
+__all__ = ["LocalWhisper", "Transcriber", "preload", "wav_to_float"]

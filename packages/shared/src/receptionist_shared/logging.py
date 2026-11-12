@@ -156,3 +156,5 @@ def configure_logging(
         std = logging.getLogger(name)
         std.handlers = [InterceptHandler()]
         std.propagate = False
+        std.disabled = False  # uvicorn's own dictConfig may have switched it off
+        std.setLevel(logging.NOTSET)

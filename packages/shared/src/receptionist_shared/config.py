@@ -72,7 +72,10 @@ class Settings(BaseSettings):
     otel_endpoint: str = "http://localhost:4318/v1/traces"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2:3b"
-    faster_whisper_model: str = "small"
+    faster_whisper_model: str = "small"  # STT_PROVIDER=faster_whisper (offline mode)
+    # Local Whisper that takes over when Groq STT fails or has no key (D37). Measured on the dev
+    # laptop: "small" 7-11 s per utterance, "base" 2-4.6 s, so the fallback uses "base".
+    stt_fallback_model: str = "base"
     kokoro_voice: str = "af_heart"
     piper_voice: str = "en_US-lessac-medium"
     # Urdu replies are spoken by Piper (Kokoro has no Urdu); see DECISIONS D10.

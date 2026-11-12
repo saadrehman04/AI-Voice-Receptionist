@@ -114,12 +114,14 @@ def test_no_groq_key_runs_stt_locally(
         build_stt(make(groq_api_key=blank))
     assert len(recorder.calls) == 2
     assert recorder.calls[0]["device"] == "cpu"
+    assert recorder.calls[0]["settings"].kwargs["model"] == "base"  # the faster fallback model
 
 
 def test_groq_stt_has_a_local_fallback() -> None:
     stt = build_stt(make(groq_api_key="gsk_test"))
     assert isinstance(stt, AutoLanguageGroqSTTService)
     assert isinstance(stt._local, LocalWhisper)
+    assert stt._local.model == "base"
 
 
 def test_groq_stt_autodetects_language_by_default() -> None:
