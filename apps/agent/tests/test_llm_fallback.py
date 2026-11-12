@@ -185,6 +185,40 @@ async def test_low_token_budget_skips_ahead_before_a_429() -> None:
     assert models(providers)[0] == "openai/gpt-oss-120b"
 
 
+async def test_a_budget_that_only_looks_short_never_puts_another_provider_first() -> None:
+    """Seen live: three quick requests made both Groq models look short, Gemini went first and
+    the caller waited 10 s twice; Groq then answered in 0.6 s. An estimate reorders within a
+    provider; only a real 429 (a cool-down) lets Gemini go ahead of Groq."""
+    low = {"x-ratelimit-remaining-tokens": "10", "x-ratelimit-reset-tokens": "30s"}
+    headers = {"openai/gpt-oss-120b": low, "openai/gpt-oss-20b": low}
+    client, providers, _ = make({}, headers, targets=[BIG, SMALL, GEMINI])
+    await post(client)  # 120b answers; its headers say it's nearly out
+    providers.seen.clear()
+    await post(client)  # 20b fits better than 120b, but both are Groq: Groq first, not Gemini
+    assert models(providers) == ["openai/gpt-oss-20b"]
+    providers.seen.clear()
+    response = await post(client)  # both Groq models now look short: still tried before Gemini
+    assert response.json()["model"] == "openai/gpt-oss-120b"
+    assert models(providers) == ["openai/gpt-oss-120b"]
+
+
+async def test_gemini_goes_ahead_once_groq_really_refuses() -> None:
+    busy = {"retry-after": "20"}
+    client, providers, _ = make(
+        {"openai/gpt-oss-120b": [429], "openai/gpt-oss-20b": [429]},
+        {"openai/gpt-oss-120b": busy, "openai/gpt-oss-20b": busy},
+    )
+    await post(client)  # both 429 quickly, Gemini answers
+    assert models(providers) == [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "gemini-3.5-flash-lite",
+    ]
+    providers.seen.clear()
+    await post(client)  # both cooling now: no wasted round trips
+    assert models(providers) == ["gemini-3.5-flash-lite"]
+
+
 async def test_gemini_gets_its_key_model_params_and_placeholder_signatures() -> None:
     client, providers, _ = make({"openai/gpt-oss-120b": [429], "openai/gpt-oss-20b": [503]})
     response = await post(client)

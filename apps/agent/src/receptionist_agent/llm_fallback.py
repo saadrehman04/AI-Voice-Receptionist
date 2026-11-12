@@ -256,6 +256,11 @@ class _Budget:
         return max(self.ready_at, min(when, self.full_at))
 
 
+def _provider(target: LlmTarget) -> str:
+    """The provider part of a target name ("groq" for "groq:openai/gpt-oss-120b")."""
+    return target.name.split(":", 1)[0]
+
+
 class BudgetBook:
     """Rate-limit state per (target, API key). Limits are per account, not per call, so every
     call in the process shares one book (`SHARED_BUDGETS`) and learns from the others."""
@@ -324,18 +329,32 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         return available is None or available >= tokens
 
     def order(self, body: Mapping[str, Any]) -> list[LlmTarget]:
-        """Targets to try: usable ones in configured order, then the rest by soonest ready.
-        A target whose key was just refused is left out: asking again can't help."""
+        """Targets to try, best first. A target whose key was just refused is left out: asking
+        again can't help.
+
+        Only a real refusal (a 429 or an error, which sets a cool-down) moves a target to the
+        back. A budget that only *looks* short from the headers is an estimate, so it reorders
+        targets of the same provider but never puts another provider first: a Groq 429 comes
+        back in a fraction of a second, while Gemini takes seconds to answer. Seen live: three
+        quick requests made Groq look short, Gemini went first and the caller waited 10 s twice,
+        then Groq answered in 0.6 s.
+        """
         now, tokens = self._clock(), self._estimate_tokens(body)
         live = [t for t in self.targets if now >= self._budgets[t].rejected_until]
-        ready = [t for t in live if self._usable_now(t, tokens, now)]
-        if self.simple_target is not None and is_simple_turn(body):
-            ready.sort(key=lambda t: t.name != self.simple_target)  # stable: rest keep order
+        providers = list(dict.fromkeys(_provider(t) for t in self.targets))
+        simple = self.simple_target is not None and is_simple_turn(body)
+
+        def rank(t: LlmTarget) -> tuple[bool, int, bool, int]:
+            usable = self._usable_now(t, tokens, now)
+            small_first = simple and usable and t.name == self.simple_target  # D26
+            return (not small_first, providers.index(_provider(t)), not usable, live.index(t))
 
         def ready_at(t: LlmTarget) -> float:
             return self._budgets[t].enough_at(tokens)
 
-        return ready + sorted((t for t in live if t not in ready), key=ready_at)
+        open_ = sorted((t for t in live if now >= self._budgets[t].ready_at), key=rank)
+        cooling = sorted((t for t in live if t not in open_), key=ready_at)
+        return open_ + cooling
 
     # ------------------------------------------------------------ bookkeeping
 
