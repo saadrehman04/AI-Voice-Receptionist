@@ -164,7 +164,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "transfer_to_human",
         "description": "Ask a team member to call the caller back.",
-        "properties": {"reason": {"type": "string"}},
+        "properties": {
+            "reason": {"type": "string"},
+            "caller_name": {"type": "string"},
+            "phone": {"type": "string"},
+        },
         "required": ["reason"],
     },
     {
@@ -555,6 +559,11 @@ class ReceptionistTools:
         return result
 
     async def transfer_to_human(self, args: Mapping[str, Any]) -> ToolResult:
+        # Seen in an eval: the caller gave name and number in the same breath, the model called
+        # this without them, and the hint below made it ask for the number again.
+        name = _str(args, "caller_name") or self.state.caller_name
+        phone = self._phone(_str(args, "phone")) or self.state.phone
+        self.state.update(caller_name=name, phone=phone)
         self.state.set_intent(Intent.HANDOFF)
         handoff_id = await self.backend.request_handoff(
             self.tenant,

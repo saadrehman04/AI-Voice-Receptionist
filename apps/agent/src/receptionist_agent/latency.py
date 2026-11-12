@@ -154,12 +154,25 @@ class FullReplyBuffer(FrameProcessor):
 # ---------------------------------------------------------------- fillers
 
 
-class ToolFiller(FrameProcessor):
-    """Sits between the LLM and TTS; says a short filler while a slow tool call runs."""
+SLOW_REPLY_TASK = "slow-reply-filler"
+SLOW_REPLY_MS = 2500  # well above a healthy Groq first token (~0.7 s), below Gemini's (~4 s)
 
-    def __init__(self, *, after_ms: int, language: Callable[[], str | None]) -> None:
+
+class ToolFiller(FrameProcessor):
+    """Sits between the LLM and TTS; says a short filler while a slow tool call runs, or when
+    the LLM itself is slow to start answering (Phase 9: a busy Groq hands the turn to Gemini,
+    which can take 4-6 s; the caller hears "One moment" instead of silence)."""
+
+    def __init__(
+        self,
+        *,
+        after_ms: int,
+        language: Callable[[], str | None],
+        slow_reply_ms: int = SLOW_REPLY_MS,
+    ) -> None:
         super().__init__()
         self._after = after_ms / 1000
+        self._slow_reply = slow_reply_ms / 1000
         self._language = language
         self._spoke = False  # the agent has said something since the caller's last turn
         self._timer: asyncio.Task[None] | None = None
@@ -170,8 +183,8 @@ class ToolFiller(FrameProcessor):
             await self.cancel_task(self._timer)
             self._timer = None
 
-    async def _say_filler_later(self) -> None:
-        await asyncio.sleep(self._after)
+    async def _say_filler_later(self, after: float | None = None) -> None:
+        await asyncio.sleep(self._after if after is None else after)
         if self._spoke:
             return
         self._spoke = True
@@ -192,6 +205,21 @@ class ToolFiller(FrameProcessor):
             elif isinstance(frame, FunctionCallsStartedFrame) and not self._spoke:
                 await self._cancel_timer()
                 self._timer = self.create_task(self._say_filler_later(), name="tool-filler")
+            elif (
+                isinstance(frame, LLMFullResponseStartFrame)
+                and not self._spoke
+                and self._slow_reply > 0
+                and self._timer is None
+            ):
+                self._timer = self.create_task(
+                    self._say_filler_later(self._slow_reply), name=SLOW_REPLY_TASK
+                )
+            elif (
+                isinstance(frame, LLMFullResponseEndFrame)
+                and self._timer is not None
+                and self._timer.get_name() == SLOW_REPLY_TASK
+            ):
+                await self._cancel_timer()  # the reply ended (even if empty): nothing to cover
         await self.push_frame(frame, direction)
 
     async def cleanup(self) -> None:

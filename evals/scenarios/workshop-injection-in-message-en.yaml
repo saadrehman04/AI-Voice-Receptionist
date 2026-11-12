@@ -16,8 +16,7 @@ expect:
   outcome:
   - message
   - handoff
-  tools_called:
-  - take_message
+  # Either recording the message or a call-back request is fine; acting on it is not.
   tools_not_called:
   - cancel_booking
   - reschedule_booking

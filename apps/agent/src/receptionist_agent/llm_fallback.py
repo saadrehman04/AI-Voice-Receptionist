@@ -17,8 +17,8 @@ gpt-oss-20b -> Gemini Flash-Lite through Google's OpenAI-compatible endpoint):
   `x-ratelimit-reset-tokens` when the remaining token budget is too small for this request), so
   we don't pay a round trip to hear "429" again.
 - If every target is cooling down we still try them all, soonest-ready first, rather than fail.
-- Phase 9 (D37): a target that doesn't answer within `TARGET_TIMEOUT_SECS` counts as down; a
-  401/403 (key pulled or revoked) cools it for minutes; a target that failed for a passing
+- Phase 9 (D37): a target that doesn't start answering in time (its `timeout_secs`) counts as
+  down; a 401/403 (key pulled or revoked) cools it for minutes; a target that failed for a passing
   reason (timeout, connection, 5xx) is retried once. If nothing answers, `degrade=True` returns
   the scripted message-taking reply from `degraded.py` instead of an error, so the caller is
   never left in silence.
@@ -58,10 +58,13 @@ GEMINI_PLACEHOLDER_SIGNATURE = "skip_thought_signature_validator"
 DEFAULT_429_COOLDOWN_SECS = 20.0
 ERROR_COOLDOWN_SECS = 5.0
 REJECTED_KEY_COOLDOWN_SECS = 300.0  # 401/403: the key was pulled or revoked; check again later
-# A healthy target sends response headers within ~1.5 s (Gemini) or ~0.5 s (Groq). Past these
-# the caller is waiting in silence, so give up on that target / on the whole request.
-TARGET_TIMEOUT_SECS = 5.0
-REQUEST_DEADLINE_SECS = 10.0
+# How long a target gets to start answering. Groq usually starts in ~0.5-1 s, Gemini in ~1-6 s
+# (measured in Phase 5): the limits sit above a healthy slow answer, so a slow provider isn't
+# cut off and retried for nothing, but a hung one doesn't keep the caller waiting.
+GROQ_TIMEOUT_SECS = 6.0
+GEMINI_TIMEOUT_SECS = 10.0
+TARGET_TIMEOUT_SECS = 8.0  # targets that don't set their own
+REQUEST_DEADLINE_SECS = 20.0  # then the scripted message-taker answers
 CHARS_PER_TOKEN = 4  # rough, for "will this request fit in the remaining budget?"
 
 
@@ -74,12 +77,15 @@ class LlmTarget:
     extra: Mapping[str, Any] = field(default_factory=dict)  # params set on every request
     drop: tuple[str, ...] = ()  # params this provider rejects
     gemini_compat: bool = False  # repairs for Gemini's OpenAI-compatible endpoint
+    timeout_secs: float | None = None  # time to start answering; None = TARGET_TIMEOUT_SECS
 
 
 def groq_target(model: str, api_key: str, *, reasoning_effort: str | None) -> LlmTarget:
     extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
     drop = () if reasoning_effort else ("reasoning_effort",)
-    return LlmTarget(f"groq:{model}", GROQ_CHAT_URL, api_key, model, extra, drop)
+    return LlmTarget(
+        f"groq:{model}", GROQ_CHAT_URL, api_key, model, extra, drop, timeout_secs=GROQ_TIMEOUT_SECS
+    )
 
 
 def gemini_target(model: str, api_key: str) -> LlmTarget:
@@ -91,6 +97,7 @@ def gemini_target(model: str, api_key: str) -> LlmTarget:
         model,
         {"reasoning_effort": "low"},
         gemini_compat=True,
+        timeout_secs=GEMINI_TIMEOUT_SECS,
     )
 
 
@@ -280,7 +287,7 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         simple_target: str | None = None,
         budgets: BudgetBook | None = None,  # default: shared by every call in the process
         degrade: bool = False,  # answer with the scripted message-taker when nothing answers
-        timeout_secs: float = TARGET_TIMEOUT_SECS,
+        timeout_secs: float | None = None,  # overrides every target's own (evals: patient)
         deadline_secs: float = REQUEST_DEADLINE_SECS,
     ) -> None:
         if not targets and not degrade:
@@ -455,7 +462,8 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
                     logger.warning("llm request deadline passed", tried=tried)
                     break
                 tried.append(target.name)
-                outcome = await self._attempt(request, target, body, min(self.timeout_secs, left))
+                own = self.timeout_secs or target.timeout_secs or TARGET_TIMEOUT_SECS
+                outcome = await self._attempt(request, target, body, min(own, left))
                 if isinstance(outcome, httpx2.Response):
                     return self._served(request, target, body, tried, outcome)
                 last = outcome.response or last

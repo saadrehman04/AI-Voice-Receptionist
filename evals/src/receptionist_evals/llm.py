@@ -57,6 +57,10 @@ def eval_targets(settings: Settings, models: tuple[str, ...] = CALLER_MODELS) ->
     return targets
 
 
+EVAL_TIMEOUT_SECS = 45.0
+EVAL_DEADLINE_SECS = 120.0
+
+
 class EvalLLM:
     def __init__(
         self,
@@ -66,7 +70,11 @@ class EvalLLM:
         retry_waits: tuple[float, ...] = RETRY_WAITS_SECS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
-        self.transport = FallbackTransport(targets, inner=network)
+        # Nobody is waiting on a phone line here: let slow answers finish (live calls cut off
+        # sooner and fall back, D37).
+        self.transport = FallbackTransport(
+            targets, inner=network, timeout_secs=EVAL_TIMEOUT_SECS, deadline_secs=EVAL_DEADLINE_SECS
+        )
         self._client = httpx2.AsyncClient(transport=self.transport, timeout=60)
         self._retry_waits = retry_waits
         self._sleep = sleep

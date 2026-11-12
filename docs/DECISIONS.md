@@ -434,8 +434,9 @@ Short entries, newest last: what we decided, why, and what else we considered.
 
 ## D37. Every provider failure has a next step, ending in "let me take a message" (Phase 9)
 - **Decision:** each stage recovers on its own, then a last safety net:
-  - **LLM:** the fallback transport (D23) gives each target 5 s to answer and the whole request
-    10 s, retries once a target that failed for a passing reason (timeout, connection, 5xx),
+  - **LLM:** the fallback transport (D23) gives each target time to start answering (Groq 6 s,
+    Gemini 10 s; a first try at 5 s cut off healthy Gemini replies in the evals) and the whole
+    request 20 s, retries once a target that failed for a passing reason (timeout, connection, 5xx),
     skips a target whose key is rejected (401/403) for 5 minutes, and when nothing answers
     returns a *scripted* reply instead of an error (`degraded.py`): it asks for name, number and
     message, saves them with the normal `take_message` tool, thanks the caller and hangs up.
@@ -446,6 +447,8 @@ Short entries, newest last: what we decided, why, and what else we considered.
     Piper instead. Kokoro and Piper are local already.
   - **Missing key at start-up:** no Groq key → LLM on Gemini, STT local; no LLM key at all →
     the scripted message-taker; no Azure key → Piper. The agent starts and answers either way.
+  - **Slow, not failed:** if the reply hasn't started 2.5 s after the LLM begins (Groq busy,
+    Gemini answering), the caller hears "One moment, please".
   - **Safety net:** `NeverSilentGuard` watches for any provider error that still reaches the
     pipeline and has the agent ask the caller to repeat (at most once per 8 s).
 - **Why:** on a phone line silence is the worst failure: callers hang up thinking the line is

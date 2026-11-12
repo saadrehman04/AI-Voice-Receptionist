@@ -383,6 +383,20 @@ async def test_lookup_message_handoff_end(
     assert tools.state.ended
 
 
+async def test_handoff_keeps_the_number_the_caller_already_gave(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Found by the Phase 9 injection eval: the number was dropped and asked for again."""
+    tools = make_tools(salon, backend, monday_9am)
+    handoff = await tools.run(
+        "transfer_to_human",
+        {"reason": "message for the owner", "caller_name": "Kamran", "phone": "0333 4567890"},
+    )
+    assert "hint" not in handoff
+    assert (tools.state.caller_name, tools.state.phone) == ("Kamran", "+923334567890")
+    assert backend.handoffs[-1]["phone"] == "+923334567890"
+
+
 async def test_unknown_tool_and_handler_crash_are_contained(
     salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
 ) -> None:
