@@ -54,6 +54,7 @@ web: ## Run the Next.js dev server on :3000
 
 test: ## Run all tests (fast; no model downloads, no network)
 	$(UV_RUN) pytest
+	$(WEB) test
 
 test-models: ## Smoke-test local Kokoro + faster-whisper on CPU (downloads models once)
 	$(UV_RUN) pytest -m models -s

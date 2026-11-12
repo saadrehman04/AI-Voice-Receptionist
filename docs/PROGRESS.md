@@ -9,7 +9,7 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - [ ] Phase 4: Backend, multi-tenancy and call records
 - [x] Phase 5: Latency and barge-in
 - [ ] Phase 6: Simulated-caller eval suite
-- [ ] Phase 7: Owner dashboard and onboarding
+- [x] Phase 7: Owner dashboard and onboarding
 - [ ] Phase 8: WhatsApp calling
 - [ ] Phase 9: Hardening and portfolio write-up
 
@@ -72,4 +72,17 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - Found and fixed: Groq STT failed without a language; Kokoro dropped long sentences; phone
   numbers were cut at the first pause; Groq's 200k tokens/day cap (D31).
 - Open: pre-warm and routing need a re-run on a fresh Groq day; Azure voices need the owner's key.
+
+### Phase 7 (owner dashboard and onboarding): done 2026-11-12
+- apps/web: sign-up wizard (website draft -> services/FAQ -> hours -> languages -> account),
+  /welcome (calendar connect + test call), Calls (transcript, recording, summary, actions),
+  Bookings, Messages, Analytics (calls/day, booking rate, calls while closed, P50/P95 per stage),
+  Settings. Mobile-friendly. API: website draft with SSRF checks and grounding (D32), calendar
+  connect, recordings, richer stats. Session and test-call design in D33-D34; docs/DEPLOY.md.
+- Verified in the browser: signed up a new business, connected a (practice) calendar, test call
+  connected and greeted with the new business's name, the call showed up with its summary,
+  a settings change reached the agent's config.
+- Open: the Vercel deploy itself needs the owner's Vercel account (steps in DEPLOY.md); the
+  browser pane blocks the microphone, so a spoken test-call conversation is still the owner's
+  to try; Google Calendar connect is tested with the fake calendar only.
 

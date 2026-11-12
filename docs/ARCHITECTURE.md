@@ -42,7 +42,7 @@ flowchart LR
 | --- | --- | --- |
 | `apps/agent` | Pipecat pipeline: audio in -> VAD -> STT -> LLM -> TTS -> audio out. Each provider sits behind an interface picked by config. | 1-2, 5 |
 | `apps/api` | FastAPI. Owns all state: tenants, bookings, messages (calls in Phase 4). Serves the agent's tools over HTTP. | 3-4 |
-| `apps/web` | Next.js dashboard for business owners, and the browser test-call page. | 1, 7 |
+| `apps/web` | Next.js owner dashboard: sign-up wizard, calls (transcript, recording, summary, actions), bookings, messages, analytics, settings, calendar connect, test call. Only its server talks to the API (session = the API's JWT in an httpOnly cookie). | 7 |
 | `packages/shared` | Python code both agent and api import: `Settings` (env config) now; tenant config schemas and API models later. | 0+ |
 | `evals` | Simulated callers that run scenarios against the agent in text mode and score the result. | 6 |
 | `tenants` | Example business configs (YAML), validated by `packages/shared`. | 2 |
@@ -142,6 +142,32 @@ flowchart LR
       tenants ||--o{ bookings : has
       tenants ||--o{ messages : has
   ```
+
+### Owner sign-up and test call (Phase 7)
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant W as Next.js server (apps/web)
+  participant A as API
+  participant G as Agent (Pipecat runner)
+  B->>W: wizard step 1: website URL (Server Action)
+  W->>A: POST /v1/onboarding/draft
+  A->>A: SSRF-checked fetch, LLM extract, ground against page text
+  A-->>B: draft (only facts the page states) for the owner to edit
+  B->>W: create (Server Action)
+  W->>A: POST /v1/onboarding -> JWT
+  W-->>B: httpOnly session cookie, go to /welcome
+  B->>W: POST /api/test-call/start
+  W->>A: GET /v1/dashboard/me (whose business?)
+  W->>G: POST /start {body: {tenant: <from session>}}
+  B->>W: WebRTC offer (proxied to G); audio then flows browser <-> agent directly
+  G->>A: call, turns, tool calls, end -> worker writes the summary
+  B->>W: /calls -> W->>A: GET /v1/dashboard/calls
+```
+
+The browser never holds the API token and never names a tenant: the dashboard's server reads
+the session cookie, and the API takes the tenant from the verified token (D33).
 
 ## Ports (local)
 

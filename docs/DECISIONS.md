@@ -350,3 +350,44 @@ Short entries, newest last: what we decided, why, and what else we considered.
   is the owner's call (paid service).
 - **Alternatives:** per-call state (simple, but repeats every 429); waiting out `retry-after`
   (dead air).
+
+## D32. Onboarding drafts from the owner's website, grounded against the page (Phase 7)
+- **Decision:** `POST /v1/onboarding/draft` fetches the site, an LLM extracts services, prices
+  and FAQ as JSON with an `evidence` quote for each, and `ground()` keeps an item only if its
+  quote and every number in it are on the page. Dropped items are listed for the owner. Nothing
+  is saved until the owner reviews the draft and submits the full setup.
+- **Why:** "never invent business facts" has to hold at onboarding too: a guessed price would
+  otherwise go straight into the config the agent quotes from. LLMs paraphrase, so quotes may
+  match loosely (80% of words), but numbers must match exactly; a test catches a near-match
+  quote with a changed price. Durations are almost never on websites, so they are left empty
+  and the wizard requires the owner to set them.
+- **Safety:** the URL is a stranger's input, so: http(s) on default ports only, every resolved
+  address must be public (checked again on each redirect), 1 MB cap, rate limit of 20 drafts
+  per hour per client address (Redis). Known gap: DNS rebinding between check and connect; a
+  production deployment would add an egress proxy.
+- **Alternatives:** no drafting (slower sign-up); trusting the LLM output (invents prices);
+  a headless browser (heavy, and a bigger SSRF surface).
+
+## D33. The dashboard is a backend-for-frontend: only the Next.js server calls the API (Phase 7)
+- **Decision:** the session cookie holds the API's own JWT (httpOnly, SameSite=Lax, Secure in
+  production, 12 h). Server Components and Server Actions call the API with it; the browser
+  never sees the token. Recordings stream through a route handler (an `<audio>` tag can't send
+  a bearer token). The test call goes through `/api/test-call/*`, which sets the tenant from the
+  session, so an owner can only call their own receptionist.
+- **Why:** no CORS on the API, no token in page scripts (XSS can't steal it), and one place
+  (the API) that decides what an owner may see. The proxy file only does an optimistic "has a
+  cookie" redirect; an expired token gets a 401 from the API and a route handler clears it.
+- **Alternatives:** browser calls the API directly with the token in localStorage (XSS
+  exposure, CORS); a separate session store in Next.js (two sessions to keep in sync);
+  NextAuth (more than this needs, and it would duplicate the API's accounts).
+
+## D34. Cache Components on, everything per-owner streams behind Suspense (Phase 7)
+- **Decision:** keep Next.js 16's `cacheComponents` (the scaffold's default). Each page is a
+  static shell (header, nav, titles) plus one Suspense boundary around the part that reads the
+  session; nothing per-owner is cached.
+- **Why:** the shell paints at once; dashboard data must be fresh (a test call has to show up
+  immediately), so caching it would only add invalidation work. The build fails if request
+  data is read outside a boundary, which caught the nav's `usePathname`.
+- **Alternatives:** turn Cache Components off (simpler mental model, slower first paint);
+  `use cache: private` for the session (no gain while every page needs fresh data).
+

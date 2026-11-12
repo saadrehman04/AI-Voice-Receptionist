@@ -53,8 +53,8 @@ Run from the repo root. `make help` lists everything.
 - `make migrate`: apply Alembic migrations to DATABASE_URL (run after `make up`)
 - `make worker`: background worker for post-call summaries (Redis queue)
 - `make api`: FastAPI on 127.0.0.1:8000 with reload in dev (`receptionist-api`); docs at /docs
-- `make web`: Next.js dev server on :3000 (`pnpm --dir apps/web dev`)
-- `make test`: pytest, no network or model downloads (tests marked `models` are skipped). Needs `make up` for the Postgres/Redis tests; they skip without it (CI sets REQUIRE_SERVICES=1 so they never skip there)
+- `make web`: Next.js dev server on :3000 (`pnpm --dir apps/web dev`); the owner dashboard. Sign up at /signup. Talks to the API (`API_URL`, default http://127.0.0.1:8000) and, for test calls, the agent (`AGENT_URL`, default http://127.0.0.1:7860)
+- `make test`: pytest + the web unit tests (vitest), no network or model downloads (tests marked `models` are skipped). Needs `make up` for the Postgres/Redis tests; they skip without it (CI sets REQUIRE_SERVICES=1 so they never skip there)
 - `make test-models`: opt-in smoke test of local Kokoro + faster-whisper on CPU (downloads ~0.6 GB once)
 - Single test: `uv run --all-packages pytest apps/api/tests/test_health.py -k ok`
 - `make lint`: ruff check, ruff format --check, mypy (strict), eslint, `next typegen && tsc --noEmit`
