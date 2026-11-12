@@ -12,6 +12,7 @@ Pipeline (each arrow is a stream of frames; nothing waits for a whole utterance)
 - The reply router picks the voice per reply (Urdu script -> Piper Urdu, else Kokoro).
 - The assistant aggregator records what the bot actually said back into the context.
 - `TurnTimingObserver` watches frames from the side and writes per-turn latencies.
+- `NeverSilentGuard` apologises if a provider error ever reaches the call (D37).
 """
 
 from __future__ import annotations
@@ -65,6 +66,7 @@ from receptionist_agent.latency import (
     prewarm,
     use_clause_chunking,
 )
+from receptionist_agent.never_silent import NeverSilentGuard
 from receptionist_agent.providers import Services, build_services, describe_providers
 from receptionist_agent.records import (
     ApiCallRecorder,
@@ -206,10 +208,15 @@ def build_task(
             assistant,
         ]
     )
+
+    async def speak(text: str) -> None:
+        await task.queue_frames([TTSSpeakFrame(text)])
+
+    guard = NeverSilentGuard(speak, lambda: call.state.language)
     task = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[*(observers or []), SpokeObserver(call.state)],
+        observers=[*(observers or []), SpokeObserver(call.state), guard],
         conversation_id=call.call_id,
         enable_tracing=call.tracing,
         additional_span_attributes={"tenant.slug": call.tenant.slug},

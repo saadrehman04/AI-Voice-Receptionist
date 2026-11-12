@@ -30,7 +30,10 @@ class PooledGroqLLMService(GroqLLMService):
         **kwargs: Any,
     ) -> None:
         # Set before super().__init__, which calls create_client.
-        self.fallback = FallbackTransport(targets, inner=network, simple_target=simple_target)
+        # degrade=True: if no model answers, a scripted reply takes a message (degraded.py).
+        self.fallback = FallbackTransport(
+            targets, inner=network, simple_target=simple_target, degrade=True
+        )
         super().__init__(**kwargs)
 
     def create_client(

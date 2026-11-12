@@ -217,11 +217,17 @@ async def test_everything_busy_still_tries_all_and_returns_the_last_error() -> N
     )
     response = await post(client)
     assert response.status_code == 503
-    assert len(providers.seen) == 3
+    # Each once, and Gemini (a passing 5xx, not a rate limit) retried once.
+    assert models(providers) == [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash-lite",
+    ]
     # Next time everything is cooling: still tried, soonest-ready first, never refused outright.
     providers.seen.clear()
     await post(client)
-    assert len(providers.seen) == 3
+    assert len(providers.seen) == 4
 
 
 async def test_connection_error_falls_through() -> None:

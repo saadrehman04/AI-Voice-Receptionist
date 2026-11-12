@@ -4,7 +4,9 @@ import pytest
 from pipecat.services.groq.llm import GroqLLMSettings
 
 from receptionist_agent import providers
+from receptionist_agent.groq_pool import PooledGroqLLMService
 from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
+from receptionist_agent.local_stt import LocalWhisper
 from receptionist_agent.providers import (
     ProviderConfigError,
     build_llm,
@@ -33,6 +35,13 @@ class Recorder:
     class Settings:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
+
+
+@pytest.fixture(autouse=True)
+def no_env_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Other tests load .env into the process (Pipecat's runner does): keep it out of these."""
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
 
 
 @pytest.fixture
@@ -72,21 +81,45 @@ def test_ollama_llm_needs_no_key() -> None:
     assert llm._settings.model == "llama3.2:3b"
 
 
-@pytest.mark.parametrize(
-    ("overrides", "env_name"),
-    [
-        ({"llm_provider": "groq"}, "GROQ_API_KEY"),
-        ({"llm_provider": "gemini"}, "GEMINI_API_KEY"),
-    ],
-)
-def test_missing_key_fails_with_clear_message(overrides: dict[str, str], env_name: str) -> None:
-    with pytest.raises(ProviderConfigError, match=env_name):
-        build_llm(make(**overrides), PROMPT)
+def test_explicit_gemini_without_its_key_fails_with_clear_message() -> None:
+    with pytest.raises(ProviderConfigError, match="GEMINI_API_KEY"):
+        build_llm(make(llm_provider="gemini"), PROMPT)
 
 
-def test_blank_key_counts_as_missing() -> None:
-    with pytest.raises(ProviderConfigError):
-        build_stt(make(groq_api_key="   "))
+# ---------------------------------------------------------------- a pulled key (D37)
+
+
+def test_no_groq_key_runs_the_llm_on_gemini() -> None:
+    llm = build_llm(make(gemini_api_key="AIza_test"), PROMPT)
+    assert isinstance(llm, PooledGroqLLMService)
+    assert [t.name for t in llm.fallback.targets] == ["gemini:gemini-3.5-flash-lite"]
+    assert llm.fallback.simple_target is None  # the simple-turn model is a Groq one
+    assert llm.fallback.degrade
+
+
+def test_no_llm_key_at_all_still_builds_the_message_taker() -> None:
+    llm = build_llm(make(), PROMPT)
+    assert isinstance(llm, PooledGroqLLMService)
+    assert llm.fallback.targets == []
+    assert llm.fallback.degrade
+
+
+def test_no_groq_key_runs_stt_locally(
+    monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]
+) -> None:
+    import pipecat.services.whisper.stt as whisper_mod
+
+    monkeypatch.setattr(whisper_mod, "WhisperSTTService", recorder)
+    for blank in (None, "   "):
+        build_stt(make(groq_api_key=blank))
+    assert len(recorder.calls) == 2
+    assert recorder.calls[0]["device"] == "cpu"
+
+
+def test_groq_stt_has_a_local_fallback() -> None:
+    stt = build_stt(make(groq_api_key="gsk_test"))
+    assert isinstance(stt, AutoLanguageGroqSTTService)
+    assert isinstance(stt._local, LocalWhisper)
 
 
 def test_groq_stt_autodetects_language_by_default() -> None:
@@ -145,17 +178,21 @@ def test_build_services_checks_llm_key_first(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(providers, "build_tts", boom)
     with pytest.raises(ProviderConfigError):
-        providers.build_services(make(), PROMPT)
+        providers.build_services(make(llm_provider="gemini"), PROMPT)
 
 
 def test_describe_providers_never_includes_secrets() -> None:
     s = make(groq_api_key="gsk_super_secret", gemini_api_key="AIza_super_secret")
     described = describe_providers(s)
-    assert described.startswith("stt=groq llm=groq (fallbacks: groq:openai/gpt-oss-20b,")
+    assert described.startswith(
+        "stt=groq (fallback: local whisper) llm=groq (fallbacks: groq:openai/gpt-oss-20b,"
+    )
     assert "secret" not in described
     assert (
-        describe_providers(make(llm_fallbacks="")) == "stt=groq llm=groq tts=kokoro (urdu: piper)"
+        describe_providers(make(groq_api_key="gsk_x", llm_fallbacks=""))
+        == "stt=groq (fallback: local whisper) llm=groq tts=kokoro (urdu: piper)"
     )
+    assert describe_providers(make(llm_fallbacks="")).startswith("stt=faster_whisper")
 
 
 class FakeTranscriptions:
@@ -251,11 +288,27 @@ def test_urdu_stays_on_piper_by_default(
     assert recorder.calls[0]["settings"].kwargs["voice"] == "ur_PK-fasih-medium"
 
 
-def test_azure_needs_key_and_region() -> None:
-    with pytest.raises(ProviderConfigError, match="AZURE_SPEECH_KEY"):
-        build_tts(make(tts_provider="azure", azure_speech_region="eastus"))
-    with pytest.raises(ProviderConfigError, match="AZURE_SPEECH_REGION"):
-        build_tts(make(tts_provider="azure", azure_speech_key="az-test-key"))
+def test_azure_without_key_or_region_speaks_with_piper(
+    monkeypatch: pytest.MonkeyPatch, recorder: type[Recorder]
+) -> None:
+    import pipecat.services.piper.tts as piper_mod
+
+    monkeypatch.setattr(piper_mod, "PiperTTSService", recorder)
+    build_tts(make(tts_provider="azure", azure_speech_region="eastus"))
+    build_tts(make(tts_provider="azure", azure_speech_key="az-test-key"))
+    providers.build_urdu_tts(make(tts_provider="azure"))
+    voices = [c["settings"].kwargs["voice"] for c in recorder.calls]
+    assert voices == ["en_US-lessac-medium", "en_US-lessac-medium", "ur_PK-fasih-medium"]
+    assert describe_providers(make(tts_provider="azure")).endswith("tts=piper")
+
+
+def test_azure_gets_a_local_piper_fallback(azure: type[Recorder]) -> None:
+    build_tts(az(tts_provider="azure"))
+    providers.build_urdu_tts(az(tts_provider="azure"))
+    assert [c["local_fallback"].voice for c in azure.calls] == [
+        "en_US-lessac-medium",
+        "ur_PK-fasih-medium",
+    ]
 
 
 def test_describe_shows_the_urdu_voice_provider_without_the_key() -> None:

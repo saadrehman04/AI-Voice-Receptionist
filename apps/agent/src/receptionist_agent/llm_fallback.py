@@ -17,6 +17,11 @@ gpt-oss-20b -> Gemini Flash-Lite through Google's OpenAI-compatible endpoint):
   `x-ratelimit-reset-tokens` when the remaining token budget is too small for this request), so
   we don't pay a round trip to hear "429" again.
 - If every target is cooling down we still try them all, soonest-ready first, rather than fail.
+- Phase 9 (D37): a target that doesn't answer within `TARGET_TIMEOUT_SECS` counts as down; a
+  401/403 (key pulled or revoked) cools it for minutes; a target that failed for a passing
+  reason (timeout, connection, 5xx) is retried once. If nothing answers, `degrade=True` returns
+  the scripted message-taking reply from `degraded.py` instead of an error, so the caller is
+  never left in silence.
 
 Gemini's OpenAI-compatible endpoint needs two repairs (`gemini_compat=True`), both found live:
 
@@ -32,6 +37,7 @@ Gemini's OpenAI-compatible endpoint needs two repairs (`gemini_compat=True`), bo
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -43,12 +49,19 @@ from typing import Any
 import httpx2
 from loguru import logger
 
+from receptionist_agent.degraded import degraded_reply
+
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GEMINI_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 GEMINI_PLACEHOLDER_SIGNATURE = "skip_thought_signature_validator"
 
 DEFAULT_429_COOLDOWN_SECS = 20.0
 ERROR_COOLDOWN_SECS = 5.0
+REJECTED_KEY_COOLDOWN_SECS = 300.0  # 401/403: the key was pulled or revoked; check again later
+# A healthy target sends response headers within ~1.5 s (Gemini) or ~0.5 s (Groq). Past these
+# the caller is waiting in silence, so give up on that target / on the whole request.
+TARGET_TIMEOUT_SECS = 5.0
+REQUEST_DEADLINE_SECS = 10.0
 CHARS_PER_TOKEN = 4  # rough, for "will this request fit in the remaining budget?"
 
 
@@ -250,6 +263,12 @@ class BudgetBook:
 SHARED_BUDGETS = BudgetBook()
 
 
+@dataclass(frozen=True)
+class _Failure:
+    kind: str  # "passing" (retry once), "busy" (429), "refused" (other 4xx, incl. a bad key)
+    response: httpx2.Response | None = None
+
+
 class FallbackTransport(httpx2.AsyncBaseTransport):
     def __init__(
         self,
@@ -260,8 +279,11 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         on_served: Callable[[LlmTarget, int], None] | None = None,
         simple_target: str | None = None,
         budgets: BudgetBook | None = None,  # default: shared by every call in the process
+        degrade: bool = False,  # answer with the scripted message-taker when nothing answers
+        timeout_secs: float = TARGET_TIMEOUT_SECS,
+        deadline_secs: float = REQUEST_DEADLINE_SECS,
     ) -> None:
-        if not targets:
+        if not targets and not degrade:
             raise ValueError("FallbackTransport needs at least one target")
         self.targets = list(targets)
         if simple_target is not None and simple_target not in {t.name for t in self.targets}:
@@ -271,8 +293,12 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
         self._clock = clock
         self._budgets = budgets if budgets is not None else SHARED_BUDGETS
         self.on_served = on_served  # (target, status) for each answered request
+        self.degrade = degrade
+        self.timeout_secs = timeout_secs
+        self.deadline_secs = deadline_secs
         self.estimated_tokens = 0  # prompt tokens sent in answered requests (chars / 4)
         self.exhausted = 0  # requests where every target was busy or down
+        self.degraded = 0  # of those, answered by the scripted message-taker
 
     # ------------------------------------------------------------ ordering
 
@@ -347,60 +373,104 @@ class FallbackTransport(httpx2.AsyncBaseTransport):
             extensions=original.extensions,
         )
 
+    async def _attempt(
+        self, request: httpx2.Request, target: LlmTarget, body: dict[str, Any], limit_secs: float
+    ) -> httpx2.Response | _Failure:
+        """One try at one target: its response, or why it failed ("passing" can be retried)."""
+        try:
+            response = await asyncio.wait_for(
+                self._inner.handle_async_request(self._request_for(request, target, body)),
+                timeout=limit_secs,
+            )
+        except (httpx2.TransportError, TimeoutError) as exc:
+            logger.warning("llm target unreachable", target=target.name, error=type(exc).__name__)
+            self._cool(target, ERROR_COOLDOWN_SECS)
+            return _Failure("passing")
+        self._note_headers(target, response)
+        status = response.status_code
+        if status < 400:
+            return response
+        await response.aread()
+        await response.aclose()
+        if status == 429 or status >= 500:
+            wait = parse_duration(response.headers.get("retry-after"))
+            if wait is None:
+                wait = DEFAULT_429_COOLDOWN_SECS if status == 429 else ERROR_COOLDOWN_SECS
+            self._cool(target, wait)
+            logger.warning(
+                "llm target busy, trying next",
+                target=target.name,
+                status=status,
+                cooldown_secs=wait,
+            )
+            return _Failure("busy" if status == 429 else "passing", response)
+        if status in (401, 403):
+            self._cool(target, REJECTED_KEY_COOLDOWN_SECS)
+            logger.error(
+                "llm key rejected, skipping this target", target=target.name, status=status
+            )
+        else:
+            logger.warning("llm target refused the request", target=target.name, status=status)
+        return _Failure("refused", response)
+
+    def _served(
+        self,
+        request: httpx2.Request,
+        target: LlmTarget,
+        body: dict[str, Any],
+        tried: list[str],
+        response: httpx2.Response,
+    ) -> httpx2.Response:
+        if len(tried) > 1 or (target is not self.targets[0] and target.name != self.simple_target):
+            logger.info("llm served by fallback", target=target.name, tried=tried)
+        self.estimated_tokens += self._estimate_tokens(body)
+        if self.on_served is not None:
+            self.on_served(target, response.status_code)
+        if target.gemini_compat and isinstance(response.stream, httpx2.AsyncByteStream):
+            return httpx2.Response(
+                response.status_code,
+                headers=[
+                    (k, v) for k, v in response.headers.items() if k.lower() != "content-length"
+                ],
+                stream=GeminiStreamFix(response.stream),
+                request=request,
+                extensions=response.extensions,
+            )
+        return response
+
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.method != "POST" or not request.url.path.endswith("/chat/completions"):
             return await self._inner.handle_async_request(request)
         body = json.loads(await request.aread())
         last: httpx2.Response | None = None
         tried: list[str] = []
-        for target in self.order(body):
-            tried.append(target.name)
-            try:
-                response = await self._inner.handle_async_request(
-                    self._request_for(request, target, body)
-                )
-            except httpx2.TransportError as exc:
-                logger.warning(
-                    "llm target unreachable", target=target.name, error=type(exc).__name__
-                )
-                self._cool(target, ERROR_COOLDOWN_SECS)
-                continue
-            self._note_headers(target, response)
-            if response.status_code == 429 or response.status_code >= 500:
-                await response.aread()
-                await response.aclose()
-                wait = parse_duration(response.headers.get("retry-after"))
-                if wait is None:
-                    limited = response.status_code == 429
-                    wait = DEFAULT_429_COOLDOWN_SECS if limited else ERROR_COOLDOWN_SECS
-                self._cool(target, wait)
-                logger.warning(
-                    "llm target busy, trying next",
-                    target=target.name,
-                    status=response.status_code,
-                    cooldown_secs=wait,
-                )
-                last = response
-                continue
-            if len(tried) > 1 or (
-                target is not self.targets[0] and target.name != self.simple_target
-            ):
-                logger.info("llm served by fallback", target=target.name, tried=tried)
-            self.estimated_tokens += self._estimate_tokens(body)
-            if self.on_served is not None:
-                self.on_served(target, response.status_code)
-            if target.gemini_compat and isinstance(response.stream, httpx2.AsyncByteStream):
-                response = httpx2.Response(
-                    response.status_code,
-                    headers=[
-                        (k, v) for k, v in response.headers.items() if k.lower() != "content-length"
-                    ],
-                    stream=GeminiStreamFix(response.stream),
-                    request=request,
-                    extensions=response.extensions,
-                )
-            return response
+        deadline = self._clock() + self.deadline_secs
+        order = self.order(body) if self.targets else []
+        retry: list[LlmTarget] = []
+        # Every target once, then one more try for the first that failed for a passing reason.
+        for round_targets in (order, retry):
+            for target in round_targets:
+                left = deadline - self._clock()
+                if left <= 0:
+                    logger.warning("llm request deadline passed", tried=tried)
+                    break
+                tried.append(target.name)
+                outcome = await self._attempt(request, target, body, min(self.timeout_secs, left))
+                if isinstance(outcome, httpx2.Response):
+                    return self._served(request, target, body, tried, outcome)
+                last = outcome.response or last
+                if outcome.kind == "passing" and not retry and round_targets is order:
+                    retry.append(target)
         self.exhausted += 1
+        if self.degrade and body.get("stream"):
+            self.degraded += 1
+            logger.error("no LLM answered; the scripted receptionist takes a message", tried=tried)
+            return httpx2.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=degraded_reply(body),
+                request=request,
+            )
         if last is not None:
             return httpx2.Response(
                 last.status_code, headers=last.headers, content=last.content, request=request

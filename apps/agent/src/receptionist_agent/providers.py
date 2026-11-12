@@ -21,6 +21,7 @@ from pipecat.transcriptions.language import Language
 from pydantic import SecretStr
 
 from receptionist_agent.llm_fallback import LlmTarget, gemini_target, groq_target
+from receptionist_agent.local_stt import LocalWhisper
 from receptionist_shared import Settings
 
 KOKORO_QUIET_TIMEOUT_SECS = 12.0
@@ -59,28 +60,44 @@ def stt_language(settings: Settings) -> Language | None:
         ) from exc
 
 
+def _has_key(key: SecretStr | None) -> bool:
+    return key is not None and bool(key.get_secret_value().strip())
+
+
+def stt_provider(settings: Settings) -> str:
+    """The STT actually used: Groq without its key falls back to local faster-whisper (D37)."""
+    if settings.stt_provider == "groq" and not _has_key(settings.groq_api_key):
+        return "faster_whisper"
+    return settings.stt_provider
+
+
+def build_local_whisper(settings: Settings) -> STTService:
+    from pipecat.services.whisper.stt import WhisperSTTService
+
+    return WhisperSTTService(
+        device="cpu",  # no NVIDIA GPU on the dev laptop
+        compute_type="int8",
+        settings=WhisperSTTService.Settings(
+            model=settings.faster_whisper_model, language=stt_language(settings)
+        ),
+    )
+
+
 def build_stt(settings: Settings) -> STTService:
     language = stt_language(settings)
-    match settings.stt_provider:
-        case "groq":
-            from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
+    if stt_provider(settings) == "faster_whisper":
+        if settings.stt_provider != "faster_whisper":
+            logger.warning("GROQ_API_KEY is not set: speech-to-text runs locally (faster-whisper)")
+        return build_local_whisper(settings)
+    from receptionist_agent.groq_stt import AutoLanguageGroqSTTService
 
-            return AutoLanguageGroqSTTService(
-                api_key=_require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq STT"),
-                settings=AutoLanguageGroqSTTService.Settings(
-                    model=settings.groq_stt_model, language=language
-                ),
-            )
-        case "faster_whisper":
-            from pipecat.services.whisper.stt import WhisperSTTService
-
-            return WhisperSTTService(
-                device="cpu",  # no NVIDIA GPU on the dev laptop
-                compute_type="int8",
-                settings=WhisperSTTService.Settings(
-                    model=settings.faster_whisper_model, language=language
-                ),
-            )
+    return AutoLanguageGroqSTTService(
+        api_key=_require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq STT"),
+        settings=AutoLanguageGroqSTTService.Settings(
+            model=settings.groq_stt_model, language=language
+        ),
+        local_fallback=LocalWhisper(settings.faster_whisper_model),
+    )
 
 
 def _parse_target(settings: Settings, item: str, groq_key: str, what: str) -> LlmTarget | None:
@@ -88,6 +105,8 @@ def _parse_target(settings: Settings, item: str, groq_key: str, what: str) -> Ll
     if not sep or not model:
         raise ProviderConfigError(f"{what} entry {item!r} is not provider:model")
     if provider == "groq":
+        if not groq_key:
+            return None  # logged once by llm_targets
         return groq_target(model, groq_key, reasoning_effort=settings.groq_reasoning_effort)
     if provider == "gemini":
         key = settings.gemini_api_key
@@ -99,23 +118,32 @@ def _parse_target(settings: Settings, item: str, groq_key: str, what: str) -> Ll
 
 
 def llm_targets(settings: Settings) -> list[LlmTarget]:
-    """Main Groq model first, then LLM_FALLBACKS whose keys are set (others are skipped)."""
-    groq_key = _require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM")
+    """Main Groq model first, then LLM_FALLBACKS whose keys are set (others are skipped).
+
+    Without GROQ_API_KEY the Groq entries are skipped too, so the call runs on the remaining
+    fallbacks (Gemini), or on none: then every turn gets the scripted message-taker (D37).
+    """
+    groq_key = settings.groq_api_key.get_secret_value().strip() if settings.groq_api_key else ""
     effort = settings.groq_reasoning_effort
-    targets = [groq_target(settings.groq_llm_model, groq_key, reasoning_effort=effort)]
+    targets = []
+    if groq_key:
+        targets.append(groq_target(settings.groq_llm_model, groq_key, reasoning_effort=effort))
     for item in filter(None, (x.strip() for x in settings.llm_fallbacks.split(","))):
         target = _parse_target(settings, item, groq_key, "LLM_FALLBACKS")
         if target is not None and target.name not in {t.name for t in targets}:
             targets.append(target)
+    if not groq_key:
+        names = ", ".join(t.name for t in targets) or "none: callers can only leave a message"
+        logger.warning(f"GROQ_API_KEY is not set: the LLM uses its fallbacks ({names})")
     return targets
 
 
 def simple_turn_target(settings: Settings, targets: list[LlmTarget]) -> str | None:
     """Name of the LLM_SIMPLE_TURN_MODEL target, added to `targets` if not already there."""
     item = settings.llm_simple_turn_model.strip()
-    if not item:
+    if not item or not targets:
         return None
-    groq_key = _require_key(settings.groq_api_key, "GROQ_API_KEY", "Groq LLM")
+    groq_key = settings.groq_api_key.get_secret_value().strip() if settings.groq_api_key else ""
     target = _parse_target(settings, item, groq_key, "LLM_SIMPLE_TURN_MODEL")
     if target is None:
         return None
@@ -134,7 +162,8 @@ def build_llm(settings: Settings, system_prompt: str) -> LLMService[Any]:
             return PooledGroqLLMService(
                 targets=targets,
                 simple_target=simple,
-                api_key=targets[0].api_key,
+                # The transport sets each target's own key; the client's is never sent.
+                api_key=targets[0].api_key if targets else "unused",
                 settings=PooledGroqLLMService.Settings(
                     model=settings.groq_llm_model,
                     system_instruction=system_prompt,
@@ -174,15 +203,36 @@ def build_tts(settings: Settings) -> TTSService:
                 stop_frame_timeout_s=KOKORO_QUIET_TIMEOUT_SECS,
             )
         case "piper":
-            from pipecat.services.piper.tts import PiperTTSService
-
-            return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_voice))
+            return build_piper(settings.piper_voice)
         case "azure":
-            return build_azure_tts(settings, voice=settings.azure_voice_en, language="en-US")
+            if not _azure_ready(settings):
+                logger.warning("Azure TTS has no key/region: speaking with local Piper instead")
+                return build_piper(settings.piper_voice)
+            return build_azure_tts(
+                settings,
+                voice=settings.azure_voice_en,
+                language="en-US",
+                fallback=settings.piper_voice,
+            )
 
 
-def build_azure_tts(settings: Settings, *, voice: str, language: str) -> TTSService:
-    """Azure AI Speech, streaming over its SDK, with word timestamps (DECISIONS D30)."""
+def build_piper(voice: str) -> TTSService:
+    from pipecat.services.piper.tts import PiperTTSService
+
+    return PiperTTSService(settings=PiperTTSService.Settings(voice=voice))
+
+
+def _azure_ready(settings: Settings) -> bool:
+    return _has_key(settings.azure_speech_key) and bool(settings.azure_speech_region)
+
+
+def build_azure_tts(
+    settings: Settings, *, voice: str, language: str, fallback: str | None = None
+) -> TTSService:
+    """Azure AI Speech, streaming over its SDK, with word timestamps (DECISIONS D30).
+
+    `fallback`: a Piper voice that speaks a sentence Azure failed on (D37).
+    """
     key = _require_key(settings.azure_speech_key, "AZURE_SPEECH_KEY", "Azure TTS")
     if not settings.azure_speech_region:
         raise ProviderConfigError(
@@ -190,8 +240,10 @@ def build_azure_tts(settings: Settings, *, voice: str, language: str) -> TTSServ
             "It is shown next to the key in the Azure portal."
         )
     from receptionist_agent.azure_tts import QuickStopAzureTTSService
+    from receptionist_agent.local_tts import PiperVoiceFallback
 
     return QuickStopAzureTTSService(
+        local_fallback=PiperVoiceFallback(fallback) if fallback else None,
         api_key=key,
         region=settings.azure_speech_region,
         settings=QuickStopAzureTTSService.Settings(voice=voice, language=language),
@@ -199,18 +251,25 @@ def build_azure_tts(settings: Settings, *, voice: str, language: str) -> TTSServ
 
 
 def urdu_tts_provider(settings: Settings) -> str:
-    if settings.urdu_tts_provider != "auto":
-        return settings.urdu_tts_provider
-    return "azure" if settings.tts_provider == "azure" else "piper"
+    """Who speaks Urdu replies; Azure without its key/region falls back to Piper (D37)."""
+    choice = settings.urdu_tts_provider
+    if choice == "auto":
+        choice = "azure" if settings.tts_provider == "azure" else "piper"
+    if choice == "azure" and not _azure_ready(settings):
+        return "piper"
+    return choice
 
 
 def build_urdu_tts(settings: Settings) -> TTSService:
     """The voice for Urdu replies: Azure's ur-PK voices, or Piper's (DECISIONS D10, D30)."""
     if urdu_tts_provider(settings) == "azure":
-        return build_azure_tts(settings, voice=settings.azure_voice_ur, language="ur-PK")
-    from pipecat.services.piper.tts import PiperTTSService
-
-    return PiperTTSService(settings=PiperTTSService.Settings(voice=settings.piper_urdu_voice))
+        return build_azure_tts(
+            settings,
+            voice=settings.azure_voice_ur,
+            language="ur-PK",
+            fallback=settings.piper_urdu_voice,
+        )
+    return build_piper(settings.piper_urdu_voice)
 
 
 def build_services(settings: Settings, system_prompt: str, *, urdu: bool = False) -> Services:
@@ -231,6 +290,11 @@ def describe_providers(settings: Settings) -> str:
     if llm == "groq" and settings.llm_fallbacks.strip():
         llm += f" (fallbacks: {settings.llm_fallbacks})"
     tts: str = settings.tts_provider
+    if tts == "azure" and not _azure_ready(settings):
+        tts = "piper"
     if urdu_tts_provider(settings) != tts:
         tts += f" (urdu: {urdu_tts_provider(settings)})"
-    return f"stt={settings.stt_provider} llm={llm} tts={tts}"
+    stt = stt_provider(settings)
+    if stt == "groq":
+        stt += " (fallback: local whisper)"
+    return f"stt={stt} llm={llm} tts={tts}"
