@@ -391,3 +391,19 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** turn Cache Components off (simpler mental model, slower first paint);
   `use cache: private` for the session (no gain while every page needs fresh data).
 
+## D35. Facts the model keeps getting wrong are computed in the tool, not asked of the prompt (Phase 6)
+- **Decision:** two checks moved from prompt to code after the first live eval run:
+  `create_booking`/`reschedule_booking` refuse a start whose weekday the caller never asked for
+  (and the agent never offered), and Urdu read-backs get the phone number pre-spelled one Urdu
+  word per digit (`spoken_digits_ur`), which the model copies.
+- **Why:** both were wrong in live runs despite clear prompt rules: a caller asked for Thursday
+  and the model sent Monday's date; an Urdu read-back turned 0300 5550128 into "three hundred,
+  fifty, fifty...". A read-back that reads the wrong number defeats the confirmation step.
+  Code makes these deterministic and testable; the prompt still guides the conversation.
+- **Limits:** the weekday guard only fires when a weekday is named (English, or Urdu words that
+  can't mean anything else); "tomorrow" or "the 20th" pass unchecked. A wrong guess costs one
+  extra tool call, never a wrong booking.
+- **Alternatives:** stronger prompt wording (already tried); a bigger model on every turn
+  (quota); asking the model to restate the weekday in the tool call (one more thing to get
+  wrong).
+

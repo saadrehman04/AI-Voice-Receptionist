@@ -11,8 +11,10 @@ from receptionist_agent.brain.tools import (
     TOOL_NAMES,
     ReceptionistTools,
     count_caller_turns,
+    days_in_play,
     goodbye_line,
     last_caller_language,
+    weekdays_named,
 )
 from receptionist_shared.tenant import TenantConfig
 
@@ -205,6 +207,9 @@ async def test_readback_step_follows_the_callers_language(
     assert "Urdu" not in english["next_step"]
     urdu = await tools.run("create_booking", booking_args(start), caller_language="ur")
     assert "Urdu script" in urdu["next_step"]
+    # the tool spells the number out digit by digit; the LLM only copies it
+    assert urdu["read_back"]["phone"] == "صفر تین صفر صفر، ایک دو تین، چار پانچ چھ سات"
+    assert english["read_back"]["phone"] == "0300 123 4567"
     assert tools.state.language == "ur"
 
 
@@ -393,3 +398,54 @@ def test_goodbye_line_follows_the_callers_language(salon: TenantConfig) -> None:
     assert goodbye_line(salon, "en") == "Thank you for calling Noor Beauty Salon. Goodbye!"
     assert goodbye_line(salon, "ur").startswith("نور بیوٹی سیلون")
     assert goodbye_line(salon, None).endswith("Goodbye!")
+
+
+# ---------------------------------------------------------------- wrong weekday (evals, Phase 6)
+
+
+def test_weekdays_named_in_english_and_urdu() -> None:
+    assert weekdays_named("Thursday at 3, or maybe friday?") == {3, 4}
+    assert weekdays_named("جمعرات کو تین بجے") == {3}
+    assert weekdays_named("اگلے ہفتے") == set()  # "next week", not Saturday
+    assert weekdays_named("Sundays are busy?") == set()  # whole words only
+
+
+def test_days_in_play_follow_the_latest_caller_request_and_later_offers() -> None:
+    context = LLMContext()
+    assert days_in_play(context) is None
+    context.add_message({"role": "user", "content": "Can I come on Wednesday?"})
+    context.add_message({"role": "user", "content": "Sorry, Thursday at 3 instead."})
+    assert days_in_play(context) == frozenset({3})
+    context.add_message({"role": "assistant", "content": "Thursday is full; Friday at 3 is free."})
+    context.add_message({"role": "user", "content": "Yes please, I'm Rabia."})
+    # the offered Friday can be accepted with a plain yes
+    assert days_in_play(context) == frozenset({3, 4})
+
+
+async def test_booking_on_a_weekday_nobody_asked_for_is_refused(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Seen in the live evals: caller asked for Thursday, the model sent Monday's date."""
+    tools = make_tools(salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]  # a Wednesday
+    refused = await tools.run("create_booking", booking_args(start), days_in_play=frozenset({3}))
+    assert refused["ok"] is False
+    assert "is a Wednesday, but the caller asked for Thursday" in refused["error"]
+    assert tools.state.pending is None  # nothing waiting for a yes
+
+    ok = await tools.run("create_booking", booking_args(start), days_in_play=frozenset({2}))
+    assert ok["ok"] and ok["booked"] is False
+    # no weekday named at all ("tomorrow", "the 18th"): no check
+    assert (await tools.run("create_booking", booking_args(start), days_in_play=None))["ok"]
+
+
+async def test_reschedule_to_a_weekday_nobody_asked_for_is_refused(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    tools = make_tools(salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]
+    await book(tools, start)
+    new_start = (await offer(tools, preferred="17:00"))["options"][0]["start"]
+    args = {"phone": PHONE, "new_start": new_start, "caller_confirmed": False}
+    refused = await tools.run("reschedule_booking", args, days_in_play=frozenset({4}))
+    assert refused["ok"] is False and "Friday" in refused["error"]

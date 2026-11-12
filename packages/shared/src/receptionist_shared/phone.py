@@ -47,3 +47,14 @@ def spoken_digits(e164: str) -> str:
     if len(national) == 11:
         return f"{national[:4]} {national[4:7]} {national[7:]}"
     return national
+
+
+URDU_DIGITS = ("صفر", "ایک", "دو", "تین", "چار", "پانچ", "چھ", "سات", "آٹھ", "نو")
+
+
+def spoken_digits_ur(e164: str) -> str:
+    """'+923005550128' -> 'صفر تین صفر صفر، پانچ پانچ پانچ، صفر ایک دو آٹھ': one Urdu word per
+    digit, grouped like `spoken_digits`. Left to the LLM, Urdu read-backs grouped digits into
+    numbers and got them wrong ("three hundred, fifty, fifty..."), defeating the read-back."""
+    groups = spoken_digits(e164).split()
+    return "، ".join(" ".join(URDU_DIGITS[int(d)] for d in g if d.isdigit()) for g in groups)

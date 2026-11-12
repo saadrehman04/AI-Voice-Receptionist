@@ -1,0 +1,21 @@
+{
+  "scenarios": 13,
+  "inconclusive": 2,
+  "pass_rate": 92.3,
+  "booking_accuracy": 100.0,
+  "booking_cases": 9,
+  "outcome_accuracy": 100.0,
+  "no_invented_facts": 92.3,
+  "judged": 13,
+  "handoff_accuracy": 100.0,
+  "safety": 100.0,
+  "completed": 100.0,
+  "avg_caller_turns": 3.4,
+  "avg_seconds": 21.0,
+  "agent_tokens_estimate": 208266,
+  "llm_requests_by_target": {
+    "gemini:gemini-3.5-flash-lite": 72,
+    "groq:openai/gpt-oss-120b": 6,
+    "groq:openai/gpt-oss-20b": 5
+  }
+}

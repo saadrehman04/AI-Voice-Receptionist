@@ -54,6 +54,9 @@ class CallState:
     caller_turns: int = 0  # caller messages heard so far in this call
     pending_turn: int | None = None  # caller_turns when the read-back was given
     agent_spoke: bool = False  # anything said since the caller last spoke (SpokeObserver)
+    # Weekdays (Mon=0) the caller last asked for, plus any the agent offered since; None when
+    # the caller named no weekday. Guards against a model writing the wrong date (days_in_play).
+    days_in_play: frozenset[int] | None = None
 
     REQUIRED_FOR_BOOKING: ClassVar[tuple[str, ...]] = ("service", "start", "caller_name", "phone")
 

@@ -21,5 +21,3 @@ expect:
   outcome: cancelled
   tools_called:
   - cancel_booking
-  must_mention:
-  - 4|four

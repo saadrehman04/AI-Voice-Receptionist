@@ -8,7 +8,7 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - [ ] Phase 3: Real tools and safe booking
 - [ ] Phase 4: Backend, multi-tenancy and call records
 - [x] Phase 5: Latency and barge-in
-- [ ] Phase 6: Simulated-caller eval suite
+- [x] Phase 6: Simulated-caller eval suite
 - [x] Phase 7: Owner dashboard and onboarding
 - [ ] Phase 8: WhatsApp calling
 - [ ] Phase 9: Hardening and portfolio write-up
@@ -72,6 +72,19 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - Found and fixed: Groq STT failed without a language; Kokoro dropped long sentences; phone
   numbers were cut at the first pause; Groq's 200k tokens/day cap (D31).
 - Open: pre-warm and routing need a re-run on a fresh Groq day; Azure voices need the owner's key.
+
+### Phase 6 (simulated-caller evals): done 2026-11-12
+- 73 scenarios (15 tagged `ci`, 10 `audio`), LLM caller + rule scorers + Gemini judge; one command
+  (`make evals`) writes a markdown + JSON scorecard with a diff; the PR workflow fails if booking
+  accuracy drops more than 2 points below `evals/baseline.json`.
+- First live run of the ci subset: 11/15. Real bugs fixed: wrong-weekday dates (code guard),
+  reschedule done as a new booking and asked twice (prompt), no goodbye after "bye" (prompt),
+  Urdu phone read-back grouped into wrong numbers (the tool now spells digits in Urdu). Two
+  checks were wrong and were fixed (an injection regex matched the refusal; a cancel 3 days
+  ahead was required to quote the 4-hour policy). Baseline run: 12/13 decided, booking 100%;
+  the failure (Urdu read-back) then passed after its fix.
+- Open: a full 73-scenario run needs ~1.2M agent tokens, several free-tier days (or Groq's paid
+  tier); `workshop-ur-book-oil-change` stayed inconclusive (rate limits).
 
 ### Phase 7 (owner dashboard and onboarding): done 2026-11-12
 - apps/web: sign-up wizard (website draft -> services/FAQ -> hours -> languages -> account),

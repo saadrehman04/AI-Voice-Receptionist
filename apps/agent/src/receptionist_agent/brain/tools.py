@@ -10,10 +10,11 @@ enforces the read-back-then-confirm rule.
 
 from __future__ import annotations
 
+import re
 import time as time_module
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
@@ -42,7 +43,7 @@ from receptionist_agent.brain.state import CallState, Intent, StateError
 from receptionist_agent.language import caller_language
 from receptionist_agent.tracing import tool_span
 from receptionist_shared.availability import spoken_slot
-from receptionist_shared.phone import normalize_pk_phone, spoken_digits
+from receptionist_shared.phone import normalize_pk_phone, spoken_digits, spoken_digits_ur
 from receptionist_shared.tenant import Service, TenantConfig
 
 ToolResult = dict[str, Any]
@@ -233,13 +234,31 @@ class ReceptionistTools:
     def _phone(self, raw: str | None) -> str | None:
         return normalize_pk_phone(raw) if raw else None
 
+    def _wrong_weekday(self, start: datetime) -> ToolResult | None:
+        """Refuse a start on a weekday nobody mentioned (seen live: the caller asked for
+        Thursday and the model passed Monday's date). Days the agent offered count too, so an
+        alternative the caller accepted with a plain "yes" still goes through."""
+        days = self.state.days_in_play
+        if days is None or start.weekday() in days:
+            return None
+        asked = ", ".join(WEEKDAY_NAMES[d] for d in sorted(days))
+        return _err(
+            f"{start:%Y-%m-%d} is a {WEEKDAY_NAMES[start.weekday()]}, but the caller asked for "
+            f"{asked}. Use the date of the day they asked for (check_availability again if "
+            "needed), or ask them which day they mean."
+        )
+
+    def _spoken_phone(self, phone: str) -> str:
+        return spoken_digits_ur(phone) if self.state.language == "ur" else spoken_digits(phone)
+
     def _say(self, step: str) -> str:
         """A read-back instruction, in the caller's language. The read-back details are
         English text; without this, models copied them out in English to Urdu callers."""
         if self.state.language == "ur":
             return (
-                f"{step} The caller speaks Urdu: say it all in Urdu script, with the day, time, "
-                "name and every digit of the phone number as Urdu words."
+                f"{step} The caller speaks Urdu: say it all in Urdu script, with the day, time "
+                "and name in Urdu, and the phone number exactly as read_back gives it, word "
+                "for word."
             )
         return step
 
@@ -355,13 +374,16 @@ class ReceptionistTools:
         self.state.update(service=service.name, start=start, caller_name=name, phone=phone)
         if start not in self.state.offered_slots:
             return _err("that time was not offered; call check_availability and offer its times")
+        if not _bool(args, "caller_confirmed") and (wrong := self._wrong_weekday(start)):
+            self.state.clear_pending()
+            return wrong
 
         details = (service.name, start.isoformat(), name, phone)
         readback = {
             "service": service.name,
             "when": spoken_slot(start),
             "name": name,
-            "phone": spoken_digits(phone),
+            "phone": self._spoken_phone(phone),
         }
         if not _bool(args, "caller_confirmed"):
             # Hold the slot while we read it back, so nobody takes it during the pause.
@@ -429,6 +451,8 @@ class ReceptionistTools:
                 "that time was not offered; call check_availability for the booking's service",
                 service=found.service,
             )
+        if not _bool(args, "caller_confirmed") and (wrong := self._wrong_weekday(new_start)):
+            return wrong
         details = (found.id, new_start.isoformat())
         readback = {
             "service": found.service,
@@ -559,6 +583,7 @@ class ReceptionistTools:
         *,
         caller_turns: int | None = None,
         caller_language: str | None = None,
+        days_in_play: frozenset[int] | Literal["unknown"] | None = "unknown",
     ) -> ToolResult:
         """Dispatch by name, with logging. Unknown tools come back as errors, never crash.
 
@@ -569,6 +594,8 @@ class ReceptionistTools:
             self.state.heard_caller(caller_turns)
         if caller_language is not None:
             self.state.language = caller_language
+        if days_in_play != "unknown":
+            self.state.days_in_play = days_in_play
         handler = self.handlers.get(name)
         if handler is None:
             return _err(f"unknown tool {name!r}")
@@ -624,6 +651,45 @@ def _caller_messages(context: LLMContext) -> list[str]:
     return texts
 
 
+WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+# English names, and Urdu ones that can't mean anything else ("ہفتہ" is also "week", so
+# Saturday in Urdu script isn't matched; a missed match only means no check, never a refusal).
+_WEEKDAY_PATTERNS = [
+    re.compile(rf"\b{name}\b|{'|'.join(urdu)}" if urdu else rf"\b{name}\b", re.IGNORECASE)
+    for name, urdu in zip(
+        WEEKDAY_NAMES,
+        (("پیر", "سوموار"), ("منگل",), ("بدھ",), ("جمعرات",), ("جمعہ", "جمعے"), (), ("اتوار",)),
+        strict=True,
+    )
+]
+
+
+def weekdays_named(text: str) -> set[int]:
+    return {day for day, pattern in enumerate(_WEEKDAY_PATTERNS) if pattern.search(text)}
+
+
+def days_in_play(context: LLMContext | None) -> frozenset[int] | None:
+    """Weekdays in the caller's latest message that names any, plus those the agent has
+    mentioned since (offers the caller can accept with a plain yes). None = no weekday named."""
+    if context is None:
+        return None
+    messages = [
+        m
+        for m in context.get_messages()
+        if isinstance(m, dict) and isinstance(m.get("content"), str)
+    ]
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") != "user":
+            continue
+        days = weekdays_named(str(messages[i]["content"]))
+        if days:
+            for later in messages[i + 1 :]:
+                if later.get("role") == "assistant":
+                    days |= weekdays_named(str(later["content"]))
+            return frozenset(days)
+    return None
+
+
 def count_caller_turns(context: LLMContext | None) -> int | None:
     """Caller messages in the LLM context: the source of truth for "has the caller replied"."""
     return None if context is None else len(_caller_messages(context))
@@ -677,6 +743,7 @@ def register_tools(llm: LLMService[Any], tools: ReceptionistTools) -> None:
                 params.arguments,
                 caller_turns=count_caller_turns(params.context),
                 caller_language=last_caller_language(params.context),
+                days_in_play=days_in_play(params.context),
             )
             if name == "end_call" and result.get("ended"):
                 # Don't ask the LLM for more, just hang up once queued audio has played

@@ -33,3 +33,10 @@ def test_invalid_numbers(raw: str) -> None:
 
 def test_spoken_digits() -> None:
     assert spoken_digits("+923001234567") == "0300 123 4567"
+
+
+def test_urdu_read_back_is_one_word_per_digit() -> None:
+    from receptionist_shared.phone import spoken_digits_ur
+
+    # the number the live eval read back as "three hundred, fifty, fifty..."
+    assert spoken_digits_ur("+923005550128") == ("صفر تین صفر صفر، پانچ پانچ پانچ، صفر ایک دو آٹھ")

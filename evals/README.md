@@ -61,3 +61,10 @@ requests, and one judge request per scenario. Scenarios run one at a time by def
 (`--parallel`), and every LLM goes through the fallback transport, which moves to the next
 model on a 429 instead of waiting. CI uses the 15-scenario `ci` subset with `--retries 1`,
 because one flaky scenario is about 7 points there.
+
+## Live results
+
+The first live run (2026-11-12, ci subset) and what it found are in `docs/PROGRESS.md`
+(Phase 6) and DECISIONS D35. `evals/baseline.json` holds the metrics CI compares against;
+refresh it with `--update-baseline evals/baseline.json` after an intended improvement.
+
