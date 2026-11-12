@@ -111,7 +111,7 @@ export function TestCall() {
           )}
         </div>
         <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">
-          Uses your microphone. Try booking, asking a price, or switching to Urdu mid-call. Speak over the
+          Uses your microphone. Try booking, asking a price, or moving an appointment. Speak over the
           receptionist to interrupt it.
         </p>
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}

@@ -4,10 +4,10 @@
 // wizard shows one or two per step. State lives in the parent (config + hours), so a section
 // is just a view with onChange.
 
-import type { ReactNode } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 
 import { type HoursForm } from "@/lib/tenant-form";
-import { WEEKDAYS, type FaqEntry, type Language, type Service, type TenantConfig } from "@/lib/types";
+import { WEEKDAYS, type FaqEntry, type Service, type TenantConfig } from "@/lib/types";
 
 import { Card, CardTitle, Field, buttonClass, inputClass } from "./ui";
 
@@ -37,7 +37,40 @@ function Section({ title, hint, id, children }: { title: string; hint?: ReactNod
   );
 }
 
+// Every time zone and currency the browser knows. The server (Node) knows a slightly different
+// list, so the server renders only the saved value and the browser fills in the rest after
+// hydration (useSyncExternalStore's server snapshot), else React reports a hydration mismatch.
+type Supported = { timeZone: string[]; currency: string[] };
+let browserLists: Supported | null = null;
+
+function readBrowserLists(): Supported {
+  if (browserLists === null) {
+    const list = (key: "timeZone" | "currency", fallback: string[]) => {
+      try {
+        return Intl.supportedValuesOf(key);
+      } catch {
+        return fallback;
+      }
+    };
+    browserLists = { timeZone: list("timeZone", ["UTC"]), currency: list("currency", ["USD", "EUR", "GBP"]) };
+  }
+  return browserLists;
+}
+
+const NOTHING_TO_WATCH = () => () => {};
+
+function useSupported(): Supported | null {
+  return useSyncExternalStore(NOTHING_TO_WATCH, readBrowserLists, () => null);
+}
+
+/** The options to show: the saved value first if the list doesn't have it (or isn't loaded yet). */
+function withCurrent(options: string[] | undefined, current: string): string[] {
+  if (!options) return [current];
+  return options.includes(current) ? options : [current, ...options];
+}
+
 export function BusinessSection({ config, onChange, showSlug = false }: EditorProps & { showSlug?: boolean }) {
+  const lists = useSupported();
   return (
     <Section title="Business" hint="What callers hear the receptionist call you, and where you are.">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -47,14 +80,6 @@ export function BusinessSection({ config, onChange, showSlug = false }: EditorPr
             value={config.business_name}
             onChange={(e) => onChange({ ...config, business_name: e.target.value })}
             required
-          />
-        </Field>
-        <Field label="Name in Urdu" hint="Optional; used when the call is in Urdu.">
-          <input
-            dir="rtl"
-            className={inputClass}
-            value={config.business_name_ur ?? ""}
-            onChange={(e) => onChange({ ...config, business_name_ur: e.target.value || null })}
           />
         </Field>
         <Field label="Kind of business" hint="e.g. hair salon, dental clinic, car workshop">
@@ -70,6 +95,32 @@ export function BusinessSection({ config, onChange, showSlug = false }: EditorPr
             value={config.address ?? ""}
             onChange={(e) => onChange({ ...config, address: e.target.value || null })}
           />
+        </Field>
+        <Field label="Time zone" hint="Opening hours and bookings use this clock.">
+          <select
+            className={inputClass}
+            value={config.timezone}
+            onChange={(e) => onChange({ ...config, timezone: e.target.value })}
+          >
+            {withCurrent(lists?.timeZone, config.timezone).map((tz) => (
+              <option key={tz} value={tz}>
+                {tz.replaceAll("_", " ")}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Currency" hint="For the prices callers hear.">
+          <select
+            className={inputClass}
+            value={config.currency}
+            onChange={(e) => onChange({ ...config, currency: e.target.value })}
+          >
+            {withCurrent(lists?.currency, config.currency).map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </Field>
         {showSlug ? (
           <Field label="Short name" hint="Lowercase letters, digits and dashes; identifies your business.">
@@ -222,15 +273,6 @@ export function FaqSection({ config, onChange }: EditorProps) {
             <Field label="Answer">
               <textarea rows={2} className={inputClass} value={f.answer} onChange={(e) => set(i, { answer: e.target.value })} />
             </Field>
-            <Field label="Answer in Urdu" hint="Optional.">
-              <textarea
-                dir="rtl"
-                rows={2}
-                className={inputClass}
-                value={f.answer_ur ?? ""}
-                onChange={(e) => set(i, { answer_ur: e.target.value || null })}
-              />
-            </Field>
             <button type="button" className={buttonClass.danger} onClick={() => onChange({ ...config, faq: faq.filter((_, j) => j !== i) })}>
               Remove
             </button>
@@ -248,62 +290,13 @@ export function FaqSection({ config, onChange }: EditorProps) {
   );
 }
 
-const LANGS: { code: Language; label: string }[] = [
-  { code: "en", label: "English" },
-  { code: "ur", label: "Urdu" },
-];
-
 export function VoiceSection({ config, onChange }: EditorProps) {
-  function toggle(code: Language) {
-    const on = config.languages.includes(code);
-    const languages = on ? config.languages.filter((l) => l !== code) : [...config.languages, code];
-    const default_language = languages.includes(config.default_language) ? config.default_language : (languages[0] ?? "en");
-    onChange({ ...config, languages, default_language });
-  }
   return (
-    <Section title="Languages, greeting and hand-off" hint="How calls start, and who callers reach when the receptionist can't help.">
+    <Section title="Greeting and hand-off" hint="How calls start, and who callers reach when the receptionist can't help.">
       <div className="space-y-4">
-        <fieldset>
-          <legend className="mb-1 text-sm font-medium">Languages</legend>
-          <div className="flex flex-wrap gap-4">
-            {LANGS.map((l) => (
-              <label key={l.code} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={config.languages.includes(l.code)} onChange={() => toggle(l.code)} />
-                {l.label}
-              </label>
-            ))}
-          </div>
-          {config.languages.length > 1 ? (
-            <label className="mt-2 flex items-center gap-2 text-sm">
-              Start calls in
-              <select
-                className={`${inputClass} w-auto`}
-                value={config.default_language}
-                onChange={(e) => onChange({ ...config, default_language: e.target.value as Language })}
-              >
-                {LANGS.filter((l) => config.languages.includes(l.code)).map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
-              <span className="text-xs text-zinc-500">(it switches when the caller does)</span>
-            </label>
-          ) : null}
-        </fieldset>
-        <Field label="Greeting (English)">
+        <Field label="Greeting">
           <input className={inputClass} value={config.greeting.en} onChange={(e) => onChange({ ...config, greeting: { ...config.greeting, en: e.target.value } })} />
         </Field>
-        {config.languages.includes("ur") ? (
-          <Field label="Greeting (Urdu)">
-            <input
-              dir="rtl"
-              className={inputClass}
-              value={config.greeting.ur ?? ""}
-              onChange={(e) => onChange({ ...config, greeting: { ...config.greeting, ur: e.target.value } })}
-            />
-          </Field>
-        ) : null}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Hand off to (name)" hint="The person the receptionist refers callers to.">
             <input className={inputClass} value={config.handoff.name} onChange={(e) => onChange({ ...config, handoff: { ...config.handoff, name: e.target.value } })} />

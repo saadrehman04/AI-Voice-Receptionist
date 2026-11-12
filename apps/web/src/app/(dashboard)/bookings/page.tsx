@@ -2,13 +2,14 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { Badge, Empty, PageHeader, Skeleton } from "@/components/ui";
-import { dashboard } from "@/lib/api";
+import { businessTimeZone, dashboard } from "@/lib/api";
 import { formatDateTime, formatPhone } from "@/lib/format";
 
 export const metadata = { title: "Bookings · Voice AI Receptionist" };
 
 async function BookingList() {
   const bookings = await dashboard.bookings(true);
+  const tz = await businessTimeZone();
   if (!bookings.length)
     return (
       <Empty title="No upcoming bookings">
@@ -30,7 +31,7 @@ async function BookingList() {
         <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {bookings.map((b) => (
             <tr key={b.code} className="flex flex-wrap gap-x-3 px-4 py-3 sm:table-row sm:p-0">
-              <td className="w-full font-medium tabular-nums sm:w-auto sm:px-4 sm:py-3">{formatDateTime(b.start)}</td>
+              <td className="w-full font-medium tabular-nums sm:w-auto sm:px-4 sm:py-3">{formatDateTime(b.start, tz)}</td>
               <td className="sm:px-4 sm:py-3">{b.service}</td>
               <td className="sm:px-4 sm:py-3">
                 {b.customer_name}{" "}

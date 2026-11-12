@@ -1,9 +1,9 @@
-// Display helpers. Times show in the business's time zone (Asia/Karachi by default), since
-// that's the clock the owner and their callers live by, whatever the viewer's laptop says.
+// Display helpers. Times show in the business's time zone (pages pass it in), since that's the
+// clock the owner and their callers live by, whatever the viewer's laptop says.
 
 import type { Outcome } from "./types";
 
-export const DEFAULT_TZ = "Asia/Karachi";
+export const DEFAULT_TZ = "UTC";
 
 export function formatDateTime(iso: string, timeZone = DEFAULT_TZ): string {
   return new Intl.DateTimeFormat("en-GB", {
@@ -44,7 +44,7 @@ export function formatDuration(secs: number | null): string {
   return m ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
 }
 
-export function formatPrice(price: string | number | null | undefined, currency = "PKR"): string {
+export function formatPrice(price: string | number | null | undefined, currency = "USD"): string {
   if (price === null || price === undefined || price === "") return "on request";
   const n = Number(price);
   return `${currency} ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n)}`;
@@ -79,11 +79,9 @@ export function callerLabel(phone: string | null, channel: string): string {
   return formatPhone(phone);
 }
 
-/** "+923001234567" -> "0300 1234567" (how Pakistani numbers are read out); others unchanged. */
+/** The number as stored, in international format ("+14155550101"). */
 export function formatPhone(phone: string | null): string {
-  if (!phone) return "unknown number";
-  const m = /^\+92(3\d{2})(\d{7})$/.exec(phone);
-  return m ? `0${m[1]} ${m[2]}` : phone;
+  return phone || "unknown number";
 }
 
 /** Stage keys of the agent's turn timings (apps/agent/.../timing.py), in the order a turn runs. */

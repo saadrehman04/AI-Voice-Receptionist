@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
 import { Badge, Card, CardTitle, PageHeader, Skeleton, cx, outcomeTone } from "@/components/ui";
-import { ApiError, dashboard } from "@/lib/api";
+import { ApiError, businessTimeZone, dashboard } from "@/lib/api";
 import {
   formatDateTime,
   formatDuration,
@@ -37,17 +37,17 @@ function Json({ value }: { value: unknown }) {
 async function Detail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const call = await load(id);
+  const tz = await businessTimeZone();
   return (
     <>
       <PageHeader
-        title={formatDateTime(call.started_at)}
+        title={formatDateTime(call.started_at, tz)}
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
             <Badge tone={outcomeTone(call.outcome)}>{outcomeLabel(call.outcome)}</Badge>
             <span>{callerLabel(call.caller_phone, call.channel)}</span>
             <span>·</span>
             <span>{formatDuration(call.duration_secs)}</span>
-            {call.language ? <span>· {call.language === "ur" ? "Urdu" : "English"}</span> : null}
             {call.sentiment ? <span>· caller {call.sentiment}</span> : null}
           </span>
         }
@@ -84,7 +84,7 @@ async function Detail({ params }: { params: Promise<{ id: string }> }) {
                       >
                         <p dir="auto" className="whitespace-pre-wrap">{t.text}</p>
                         <p className={cx("mt-1 text-[11px]", agent ? "text-zinc-500" : "text-emerald-100")}>
-                          {agent ? "Receptionist" : "Caller"} · {formatTime(t.spoken_at)}
+                          {agent ? "Receptionist" : "Caller"} · {formatTime(t.spoken_at, tz)}
                           {agent && t.timings?.total !== undefined ? ` · answered in ${formatMs(t.timings.total)}` : ""}
                           {t.interrupted ? " · interrupted" : ""}
                         </p>

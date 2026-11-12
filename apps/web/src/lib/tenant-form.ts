@@ -50,11 +50,17 @@ export function slugify(name: string): string {
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
-export function greetingFor(name: string): { en: string; ur: string } {
-  return {
-    en: `Thank you for calling ${name}. How can I help you today?`,
-    ur: `${name} میں فون کرنے کا شکریہ۔ میں آپ کی کیا مدد کر سکتی ہوں؟`,
-  };
+export function greetingFor(name: string): { en: string } {
+  return { en: `Thank you for calling ${name}. How can I help you today?` };
+}
+
+/** The owner's own time zone (from their browser), the usual home of their business. */
+export function localTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 /** A starting point for the wizard: no services, no prices, nothing the owner didn't enter. */
@@ -64,10 +70,10 @@ export function starterConfig(businessName: string, businessType: string): Tenan
     slug: slugify(businessName),
     business_name: businessName,
     business_type: businessType,
-    languages: ["en", "ur"],
+    languages: ["en"],
     default_language: "en",
-    timezone: "Asia/Karachi",
-    currency: "PKR",
+    timezone: localTimeZone(),
+    currency: "USD",
     address: null,
     opening_hours: {
       monday: weekday,
@@ -142,8 +148,6 @@ export function problemsByArea(config: TenantConfig, hours?: HoursForm): Record<
   if (!config.languages.includes(config.default_language))
     errors.push("The default language must be one of the languages you picked.");
   if (!config.greeting.en.trim()) errors.push("Enter the English greeting.");
-  if (config.languages.includes("ur") && !config.greeting.ur?.trim())
-    errors.push("Enter the Urdu greeting (or turn Urdu off).");
   if (!config.handoff.name.trim() || !config.handoff.phone.trim())
     errors.push("Enter who callers are handed to when the receptionist can't help, and their phone.");
 
@@ -191,7 +195,7 @@ export function validateConfig(config: TenantConfig, hours?: HoursForm): string[
   return [...p.business, ...p.voice, ...p.services, ...p.hours];
 }
 
-/** The JSON the API expects: hours as strings, empty prices as null, Urdu greeting only if used. */
+/** The JSON the API expects: hours as strings, empty prices as null. */
 export function toPayload(config: TenantConfig, hours: HoursForm): Record<string, unknown> {
   return {
     ...config,

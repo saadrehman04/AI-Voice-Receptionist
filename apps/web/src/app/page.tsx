@@ -8,7 +8,7 @@ export default function Home() {
       <div>
         <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Voice AI Receptionist</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-          Your phone answered in Urdu and English, day and night.
+          Your phone answered, day and night.
         </h1>
         <p className="mt-3 text-lg text-zinc-600 dark:text-zinc-400">
           It books, moves and cancels appointments in your calendar, answers questions from your

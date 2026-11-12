@@ -1,6 +1,7 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { connection } from "next/server";
 
 import { getToken } from "./session";
@@ -87,6 +88,9 @@ async function owner<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw err;
   }
 }
+
+/** The business's own time zone, for showing times on its clock (fetched once per request). */
+export const businessTimeZone = cache(async (): Promise<string> => (await dashboard.settings()).timezone);
 
 export const dashboard = {
   me: () => owner<Me>("/me"),

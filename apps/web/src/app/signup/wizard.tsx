@@ -31,7 +31,7 @@ const STEPS: { title: string; areas: Area[] }[] = [
   { title: "Your business", areas: ["business"] },
   { title: "Services and FAQ", areas: ["services"] },
   { title: "Opening hours", areas: ["hours"] },
-  { title: "Languages", areas: ["voice"] },
+  { title: "Greeting", areas: ["voice"] },
   { title: "Your account", areas: [] },
 ];
 
@@ -57,7 +57,6 @@ export function Wizard() {
       const greeting = { ...next.greeting };
       const fresh = greetingFor(next.business_name);
       if (!next.greeting.en || next.greeting.en === oldGreeting.en) greeting.en = fresh.en;
-      if (!next.greeting.ur || next.greeting.ur === oldGreeting.ur) greeting.ur = fresh.ur;
       updated = { ...updated, greeting, slug: slugEdited ? next.slug : slugify(next.business_name) };
     }
     if (next.slug !== config.slug && next.business_name === config.business_name) setSlugEdited(true);

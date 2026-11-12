@@ -2,13 +2,14 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { Badge, Empty, PageHeader, Skeleton, outcomeTone } from "@/components/ui";
-import { dashboard } from "@/lib/api";
+import { businessTimeZone, dashboard } from "@/lib/api";
 import { callerLabel, formatDateTime, formatDuration, outcomeLabel } from "@/lib/format";
 
 export const metadata = { title: "Calls · Voice AI Receptionist" };
 
 async function CallList() {
   const calls = await dashboard.calls(100);
+  const tz = await businessTimeZone();
   if (!calls.length)
     return (
       <Empty title="No calls yet" action={{ href: "/test-call", label: "Make a test call" }}>
@@ -25,7 +26,7 @@ async function CallList() {
             className="flex flex-col gap-1 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 sm:flex-row sm:items-center sm:gap-4"
           >
             <div className="flex items-center justify-between gap-3 sm:w-64 sm:shrink-0 sm:justify-start">
-              <span className="text-sm font-medium tabular-nums">{formatDateTime(c.started_at)}</span>
+              <span className="text-sm font-medium tabular-nums">{formatDateTime(c.started_at, tz)}</span>
               <Badge tone={outcomeTone(c.outcome)}>{outcomeLabel(c.outcome)}</Badge>
             </div>
             <p className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-300">

@@ -91,10 +91,12 @@ describe("validateConfig", () => {
     expect(validateConfig({ ...ready(), whatsapp_phone_number_id: "+92 300" })).toHaveLength(1);
   });
 
-  it("needs an Urdu greeting only when Urdu is on", () => {
-    const c = { ...ready(), greeting: { en: "Hello", ur: "" } };
-    expect(validateConfig(c)).toEqual(["Enter the Urdu greeting (or turn Urdu off)."]);
-    expect(validateConfig({ ...c, languages: ["en"] })).toEqual([]);
+  it("starts new businesses in English, on the owner's clock, in US dollars", () => {
+    const c = starterConfig("Bright Smile Dental", "dental clinic");
+    expect(c.languages).toEqual(["en"]);
+    expect(c.greeting).toEqual({ en: "Thank you for calling Bright Smile Dental. How can I help you today?" });
+    expect(c.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(c.currency).toBe("USD");
   });
 });
 

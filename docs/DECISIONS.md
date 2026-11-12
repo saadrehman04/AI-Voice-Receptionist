@@ -507,3 +507,13 @@ Short entries, newest last: what we decided, why, and what else we considered.
   at the last turn keeps the usage minutes honest.
 - **Alternatives:** a heartbeat from the agent (more traffic for the same answer); closing on
   agent start-up (misses a crashed agent that never comes back, and several agents can run).
+
+## D41. The dashboard is English-only and not tied to Pakistan (2026-11-13)
+- **Decision:** the owner dashboard no longer offers Urdu (no Urdu name, greeting, FAQ answers or
+  language picker); new businesses start in English, on the owner's own time zone, in USD, and
+  owners can pick any time zone and currency. Times show on the business's clock (from its
+  settings), phone numbers in international format.
+- **Why:** the product is being pitched to clients outside Pakistan too.
+- **Not changed (dashboard only, by choice):** the agent still speaks Urdu for businesses that
+  already have it on, and still reads phone numbers as Pakistani (`normalize_pk_phone`), so a
+  booking from a caller with a non-Pakistani number is refused until that is generalised.

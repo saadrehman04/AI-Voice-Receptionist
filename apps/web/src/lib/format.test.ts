@@ -15,8 +15,9 @@ import {
 
 describe("format", () => {
   it("shows times on the business's clock", () => {
-    // 05:30 UTC is 10:30 in Lahore (UTC+5), whatever zone the test machine is in
-    expect(formatDateTime("2026-11-16T05:30:00Z")).toBe("Mon 16 Nov, 10:30");
+    // whatever zone the test machine is in
+    expect(formatDateTime("2026-11-16T15:30:00Z", "America/New_York")).toBe("Mon 16 Nov, 10:30");
+    expect(formatDateTime("2026-11-16T15:30:00Z")).toBe("Mon 16 Nov, 15:30"); // UTC unless told
   });
 
   it("keeps a calendar day on its own date", () => {
@@ -27,7 +28,8 @@ describe("format", () => {
     expect(formatDuration(null)).toBe("in progress");
     expect(formatDuration(42)).toBe("42s");
     expect(formatDuration(125)).toBe("2m 05s");
-    expect(formatPrice("2500")).toBe("PKR 2,500");
+    expect(formatPrice("2500")).toBe("USD 2,500");
+    expect(formatPrice("40", "GBP")).toBe("GBP 40");
     expect(formatPrice(null)).toBe("on request");
     expect(formatMs(380.4)).toBe("380 ms");
     expect(formatMs(1834)).toBe("1.83 s");
@@ -35,12 +37,11 @@ describe("format", () => {
     expect(formatPercent(null)).toBe("–");
   });
 
-  it("reads Pakistani mobile numbers the local way", () => {
-    expect(formatPhone("+923001234567")).toBe("0300 1234567");
-    expect(formatPhone("+441234567890")).toBe("+441234567890");
+  it("shows phone numbers in international format", () => {
+    expect(formatPhone("+14155550101")).toBe("+14155550101");
     expect(formatPhone(null)).toBe("unknown number");
     expect(callerLabel(null, "webrtc")).toBe("Browser call");
-    expect(callerLabel("+923001234567", "whatsapp")).toBe("0300 1234567");
+    expect(callerLabel("+14155550101", "whatsapp")).toBe("+14155550101");
   });
 
   it("labels outcomes for owners", () => {

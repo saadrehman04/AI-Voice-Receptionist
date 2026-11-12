@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 
 import { Badge, Empty, PageHeader, Skeleton } from "@/components/ui";
-import { dashboard } from "@/lib/api";
+import { businessTimeZone, dashboard } from "@/lib/api";
 import { formatDateTime, formatPhone } from "@/lib/format";
 
 import { MessageToggle } from "./message-toggle";
@@ -10,6 +10,7 @@ export const metadata = { title: "Messages · Voice AI Receptionist" };
 
 async function MessageList() {
   const messages = await dashboard.messages();
+  const tz = await businessTimeZone();
   if (!messages.length)
     return (
       <Empty title="No messages">
@@ -36,7 +37,7 @@ async function MessageList() {
                 </Badge>
                 <span className="font-medium">{m.caller_name ?? "Caller"}</span>
                 <span className="text-zinc-500 dark:text-zinc-400">{formatPhone(m.caller_phone)}</span>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">{formatDateTime(m.created_at)}</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">{formatDateTime(m.created_at, tz)}</span>
               </div>
               <p dir="auto" className={`mt-2 text-sm ${m.status === "done" ? "text-zinc-500 line-through" : ""}`}>
                 {m.body}
