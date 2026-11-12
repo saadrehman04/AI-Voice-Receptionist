@@ -1,0 +1,23 @@
+# Voice receptionist voice agent (Pipecat): answers calls.
+# Install: docs/DEPLOY.md ("Run the services"). Logs: journalctl -u receptionist-agent -f
+[Unit]
+Description=Voice receptionist agent
+# Ports for the call audio (WebRTC, UDP) are opened per call: see "Firewall" in docs/DEPLOY.md.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=receptionist
+Group=receptionist
+# Settings read .env from here (ENVIRONMENT=prod there turns off auto-reload).
+WorkingDirectory=/opt/voice-receptionist
+# --no-sync: dependencies were installed by `make install`; start without touching the network.
+ExecStart=/usr/local/bin/uv run --all-packages --no-sync python -m receptionist_agent
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

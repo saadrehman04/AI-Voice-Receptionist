@@ -44,6 +44,7 @@ Progress is tracked in docs/PROGRESS.md.
 ## Commands
 Run from the repo root. `make help` lists everything.
 - `make install`: `uv sync --all-packages` + `pnpm install` in apps/web; first time, creates .env from .env.example with fresh JWT_SECRET / AGENT_API_TOKEN and BOOKING_BACKEND=api
+- `make install-server`: Python deps + `.env` only, for a server (the dashboard is on Vercel); deploy files in `deploy/`, steps in docs/DEPLOY.md
 - `make dev`: api + worker + agent + web together (`make -j4`); the three-command quick start is `make install`, `make up migrate`, `make dev`
 - `make up` / `make down` / `make logs`: Postgres 16 + Redis 7 via docker compose (`up` waits for healthchecks)
 - `make agent`: voice agent on :7860 (`uv run --all-packages python -m receptionist_agent`); talk at http://localhost:7860/client. Must run as `python -m` (Pipecat's runner finds `bot` on `__main__`)

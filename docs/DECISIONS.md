@@ -517,3 +517,16 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Not changed (dashboard only, by choice):** the agent still speaks Urdu for businesses that
   already have it on, and still reads phone numbers as Pakistani (`normalize_pk_phone`), so a
   booking from a caller with a non-Pakistani number is refused until that is generalised.
+
+## D42. In production, Caddy lets only the dashboard start calls on the agent (2026-11-13)
+- **Decision:** `deploy/Caddyfile` passes the agent's call set-up (`/start`, `/sessions/*`) only
+  with an `X-Agent-Key` header, which the dashboard's test-call proxy adds from `AGENT_KEY`;
+  `/whatsapp` (signed by Meta) passes; everything else, the Pipecat `/client` playground
+  included, gets 404. systemd units in `deploy/systemd/` run the API, worker and agent.
+- **Why:** the agent's `/start` takes the business from the request body and checks no login.
+  Public, anyone could talk to any business's receptionist, make real bookings and spend the
+  LLM budget. The dashboard already limits owners to their own business; the key makes it the
+  only way in.
+- **Alternatives:** checking a token inside the agent (more code in Pipecat's runner, which
+  owns those routes); IP allow-lists (Vercel's addresses change); leaving `/client` open
+  (free token spending for anyone who finds the address).

@@ -12,6 +12,9 @@ import type { Me } from "@/lib/types";
 // test-call their own receptionist. Only these paths are forwarded.
 
 const AGENT_URL = (process.env.AGENT_URL ?? "http://127.0.0.1:7860").replace(/\/$/, "");
+// In production the agent sits behind Caddy, which lets call set-up through only with this key
+// (deploy/Caddyfile): the agent's /start checks no login itself. Unset in local development.
+const AGENT_KEY = process.env.AGENT_KEY;
 const OFFER = /^sessions\/[0-9a-f-]{36}\/api\/offer$/;
 
 async function owner(): Promise<Me | NextResponse> {
@@ -28,7 +31,7 @@ async function owner(): Promise<Me | NextResponse> {
 async function forward(method: string, path: string, body: string): Promise<NextResponse> {
   const upstream = await fetch(`${AGENT_URL}/${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(AGENT_KEY ? { "X-Agent-Key": AGENT_KEY } : {}) },
     body,
     cache: "no-store",
   }).catch(() => null);

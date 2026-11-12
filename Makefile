@@ -6,14 +6,16 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: dev whatsapp-sim help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
+.PHONY: dev whatsapp-sim help install install-server up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install Python + web deps; first time, create .env with fresh local secrets
-	uv sync --all-packages
+install: install-server ## Install Python + web deps; first time, create .env with fresh local secrets
 	$(WEB) install --frozen-lockfile
+
+install-server: ## Python deps + .env only: for the server (the dashboard runs on Vercel)
+	uv sync --all-packages
 	@test -f .env || (sed \
 	    -e "s/^JWT_SECRET=$$/JWT_SECRET=$$(openssl rand -hex 32)/" \
 	    -e "s/^AGENT_API_TOKEN=$$/AGENT_API_TOKEN=$$(openssl rand -hex 32)/" \

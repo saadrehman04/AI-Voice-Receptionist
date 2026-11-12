@@ -1,0 +1,22 @@
+# Voice receptionist API (FastAPI): bookings, call records, dashboard data.
+# Install: docs/DEPLOY.md ("Run the services"). Logs: journalctl -u receptionist-api -f
+[Unit]
+Description=Voice receptionist api
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=receptionist
+Group=receptionist
+# Settings read .env from here (ENVIRONMENT=prod there turns off auto-reload).
+WorkingDirectory=/opt/voice-receptionist
+# --no-sync: dependencies were installed by `make install`; start without touching the network.
+ExecStart=/usr/local/bin/uv run --all-packages --no-sync uvicorn receptionist_api.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

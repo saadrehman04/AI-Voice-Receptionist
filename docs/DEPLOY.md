@@ -11,27 +11,78 @@ Browser ──https──> Vercel (apps/web) ──https──> API (FastAPI)  �
    └──────── WebRTC audio (UDP) ────────> Agent ───┘ (tools, call records)
 ```
 
-## 1. API, worker and agent
+## 1. API, worker and agent on a server
 
-On the machine that runs them (from the repo root):
+Any Linux VM (Ubuntu 24.04 used below) with about 4 CPUs and 8 GB RAM: the agent keeps its
+speech models in memory. Ready-made files are in `deploy/`: a Caddyfile (HTTPS) and systemd
+units that start the API, worker and agent at boot and restart them if they stop.
+
+You need two web names pointing at the server's public IP, one for the API and one for the
+agent (free from DuckDNS, e.g. `myapp-api.duckdns.org` and `myapp-agent.duckdns.org`).
+
+**Install** (as a sudo user on the server):
 
 ```bash
-make install            # once
-make up && make migrate # Postgres + Redis, then the schema
-make api                # :8000
-make worker             # post-call summaries
-make agent              # :7860
+sudo apt update && sudo apt install -y git make docker.io docker-compose-v2 caddy
+curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+sudo useradd --system --create-home --shell /usr/sbin/nologin receptionist
+sudo git clone https://github.com/<you>/voice-receptionist.git /opt/voice-receptionist
+sudo chown -R receptionist: /opt/voice-receptionist
+cd /opt/voice-receptionist
+sudo -u receptionist -H make install-server   # Python deps + .env with fresh secrets
 ```
 
-`.env` must have `JWT_SECRET`, `AGENT_API_TOKEN`, `GROQ_API_KEY` (and optionally
-`GEMINI_API_KEY`, `AZURE_SPEECH_KEY`), plus `BOOKING_BACKEND=api` so the agent reads tenants
-created in the dashboard. For real calendars see [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md).
+**Configure** `sudo -u receptionist nano /opt/voice-receptionist/.env`:
 
-In production run them without reload, e.g. `uv run --all-packages uvicorn
-receptionist_api.main:app --host 127.0.0.1 --port 8000`, under systemd or `docker run`, and put
-the API and the agent behind HTTPS (Caddy does certificates for free).
+- `ENVIRONMENT=prod` (no auto-reload, secure cookies)
+- a long random `POSTGRES_PASSWORD`, and the same password inside `DATABASE_URL`
+- `GROQ_API_KEY` (and optionally `GEMINI_API_KEY`, `AZURE_SPEECH_KEY`)
+- `JWT_SECRET`, `AGENT_API_TOKEN` and `BOOKING_BACKEND=api` were set by `make install-server`
 
-### Reaching them from Vercel without a server
+```bash
+sudo docker compose up -d --wait              # Postgres + Redis, local to the server only
+sudo -u receptionist -H make migrate
+```
+
+**Run the services**:
+
+```bash
+sudo cp deploy/systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now receptionist-api receptionist-worker receptionist-agent
+journalctl -u receptionist-agent -f           # watch it start (models load in ~30 s)
+```
+
+**HTTPS with Caddy.** The agent's `/start` takes the business from the request and checks no
+login, so Caddy lets call set-up through only with a key that the dashboard sends, lets Meta's
+signed `/whatsapp` webhook through, and refuses everything else (Pipecat's `/client` playground
+included). Make the key and fill in your names:
+
+```bash
+KEY=$(openssl rand -hex 32)
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+sudo sed -i -e "s/api.example.com/myapp-api.duckdns.org/" \
+  -e "s/agent.example.com/myapp-agent.duckdns.org/" \
+  -e "s/REPLACE_WITH_AGENT_KEY/$KEY/" /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+echo "$KEY"   # once, to paste into Vercel as AGENT_KEY (step 2); keep it out of chats and repos
+```
+
+**Firewall**: open TCP 80 and 443 (Caddy). Call audio is WebRTC over UDP and goes straight to
+the agent, not through Caddy: allow inbound UDP to the server (aiortc picks high ports per call),
+or use a TURN server (see "WebRTC audio" under the laptop demo below). On a cloud VM behind NAT (Azure, Oracle) the agent may
+also need a STUN server to learn its public address. This part hasn't been tested on a cloud
+server yet: check the first browser test call carefully.
+
+**Update** to a new version:
+
+```bash
+cd /opt/voice-receptionist && sudo -u receptionist git pull
+sudo -u receptionist -H make install-server && sudo -u receptionist -H make migrate
+sudo systemctl restart receptionist-api receptionist-worker receptionist-agent
+```
+
+### Demo from your laptop instead of a server
 
 For a demo from your laptop, a free Cloudflare quick tunnel gives each port a public HTTPS URL:
 
@@ -58,10 +109,11 @@ replaces browser calls for real callers anyway; the browser test call is for own
    | --- | --- |
    | `API_URL` | the API's public HTTPS URL, no trailing slash |
    | `AGENT_URL` | the agent's public HTTPS URL |
+   | `AGENT_KEY` | the key from the Caddy step (test calls are refused without it) |
 
 3. Deploy. Sign-up is at `/signup`.
 
-Both variables are read only on the server (they have no `NEXT_PUBLIC_` prefix), so the
+All three are read only on the server (they have no `NEXT_PUBLIC_` prefix), so the
 browser never learns where the API lives, and the session cookie is `Secure` in production.
 
 ## 3. Check it

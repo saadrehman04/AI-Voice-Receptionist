@@ -1,0 +1,33 @@
+# Caddy: HTTPS in front of the API and the voice agent. Certificates are automatic and free.
+# Copy to /etc/caddy/Caddyfile on the server, then replace (steps in docs/DEPLOY.md):
+#   api.example.com          -> your API's name (e.g. myapp-api.duckdns.org)
+#   agent.example.com        -> your agent's name (e.g. myapp-agent.duckdns.org)
+#   REPLACE_WITH_AGENT_KEY   -> a long random key, the same as AGENT_KEY in Vercel
+# Never commit the real key: this file in the repo keeps the placeholder.
+
+api.example.com {
+	# Dashboard routes need the owner's login; the agent's tool routes need AGENT_API_TOKEN.
+	reverse_proxy 127.0.0.1:8000
+}
+
+agent.example.com {
+	# The agent's /start takes the business from the request and checks no login, so only the
+	# dashboard may call it: its test-call proxy adds this key (AGENT_KEY in Vercel).
+	@calls path /start /sessions/*
+	handle @calls {
+		@nokey not header X-Agent-Key REPLACE_WITH_AGENT_KEY
+		respond @nokey 403
+		reverse_proxy 127.0.0.1:7860
+	}
+
+	# Meta's WhatsApp webhook: every request is signed with the app secret, checked by the agent.
+	handle /whatsapp {
+		reverse_proxy 127.0.0.1:7860
+	}
+
+	# Everything else, including Pipecat's /client playground (a developer tool on your own
+	# machine), stays private.
+	handle {
+		respond 404
+	}
+}
