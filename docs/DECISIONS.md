@@ -431,3 +431,48 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** a SIP gateway (paid, more moving parts); Twilio's WhatsApp calling (paid);
   Pipecat's routes as-is (single business, see above).
 
+
+## D37. Every provider failure has a next step, ending in "let me take a message" (Phase 9)
+- **Decision:** each stage recovers on its own, then a last safety net:
+  - **LLM:** the fallback transport (D23) gives each target 5 s to answer and the whole request
+    10 s, retries once a target that failed for a passing reason (timeout, connection, 5xx),
+    skips a target whose key is rejected (401/403) for 5 minutes, and when nothing answers
+    returns a *scripted* reply instead of an error (`degraded.py`): it asks for name, number and
+    message, saves them with the normal `take_message` tool, thanks the caller and hangs up.
+  - **STT:** Groq Whisper gets 4 s and one retry, then the same audio goes to local
+    faster-whisper on the CPU; after two failed utterances in a row Groq is skipped for a
+    minute.
+  - **TTS:** a sentence Azure fails on (error, rejected key, no audio in 5 s) is spoken by local
+    Piper instead. Kokoro and Piper are local already.
+  - **Missing key at start-up:** no Groq key → LLM on Gemini, STT local; no LLM key at all →
+    the scripted message-taker; no Azure key → Piper. The agent starts and answers either way.
+  - **Safety net:** `NeverSilentGuard` watches for any provider error that still reaches the
+    pipeline and has the agent ask the caller to repeat (at most once per 8 s).
+- **Why:** on a phone line silence is the worst failure: callers hang up thinking the line is
+  dead. A slower answer, a different voice, or "please leave a message" all keep the caller and
+  the lead. Free tiers fail often (Groq's daily cap ran out during Phase 6/8 testing), so this
+  is the normal path some days, not an edge case.
+- **Why the scripted reply sits in the transport:** below the OpenAI client, the pipeline sees a
+  normal streamed reply with normal tool calls, so recording, the dashboard and tool rules all
+  work unchanged, and the real model takes over again mid-call if it comes back (the exchange is
+  in its context). It is stateless (the step is read from the conversation) and states no
+  business facts, so it cannot invent one.
+- **Alternatives:** Pipecat's `ServiceSwitcher` failover (switches only on permanent errors and
+  loses the utterance that failed); a second full LLM provider on a paid plan (cost); ending the
+  call with an apology (loses the lead).
+
+## D38. Per-business limits: calls/hour in Redis, minutes/month from call records (Phase 9)
+- **Decision:** before answering, the agent asks the API `POST /calls/admit`. Calls per hour is a
+  Redis counter per business per clock hour; minutes per month is summed from the business's
+  own call records (its time zone's month). Defaults come from Settings; a tenant row can
+  override them (migration 0004, not owner-editable). Over a limit, the caller hears "we can't
+  take more calls right now, please call {hand-off contact} on {number}" and the call ends;
+  bookings and messages are also capped per business per hour (429 `rate_limited`, which the
+  agent turns into "let me take a message"). If the check itself fails, the call goes through.
+  Owners see the month's minutes against the limit on the Analytics page.
+- **Why:** one business's spike (or a script dialling it) must not spend the whole free LLM
+  quota that every other business shares, and a plan needs a number to bill on. Minutes come from
+  Postgres so they survive a Redis restart; the hourly counter needs speed, not durability.
+- **Alternatives:** token-based limits (closer to cost, but owners think in calls and minutes);
+  limits in the agent process (lost on restart, wrong with several agents); refusing calls
+  silently (the caller deserves to know who to call).

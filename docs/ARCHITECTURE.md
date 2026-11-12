@@ -1,18 +1,19 @@
 # Architecture
 
-Status: Phase 4 (multi-tenant backend with owner auth, call records and post-call analysis). The dashboard UI comes in Phase 7.
+Status: Phase 9 (hardening). All parts are built: voice agent, API, dashboard, evals, WhatsApp
+calling; failure handling and per-business limits added in Phase 9. Security: [SECURITY.md](SECURITY.md).
 
 ## Big picture
 
 ```mermaid
 flowchart LR
-    caller([Caller<br/>browser WebRTC<br/>later: WhatsApp call])
+    caller([Caller<br/>browser WebRTC<br/>or WhatsApp call])
 
     subgraph agent["apps/agent - Pipecat voice agent (Python)"]
         direction LR
-        vad[VAD<br/>Silero] --> stt[STT<br/>Groq Whisper<br/>| faster-whisper]
-        stt --> llm[LLM<br/>Groq gpt-oss + fallback<br/>| Gemini | Ollama]
-        llm --> tts[TTS<br/>Kokoro<br/>| Piper]
+        vad[VAD<br/>Silero] --> stt[STT<br/>Groq Whisper<br/>fallback: local faster-whisper]
+        stt --> llm[LLM<br/>Groq gpt-oss -> Gemini<br/>last resort: scripted message-taker]
+        llm --> tts[TTS<br/>Kokoro | Piper | Azure<br/>fallback: local Piper]
     end
 
     subgraph api["apps/api - FastAPI (Python)"]
@@ -41,9 +42,9 @@ flowchart LR
 | Path | What it is | Phase |
 | --- | --- | --- |
 | `apps/agent` | Pipecat pipeline: audio in -> VAD -> STT -> LLM -> TTS -> audio out. Each provider sits behind an interface picked by config. Also serves Meta's WhatsApp call webhook (`whatsapp/`, docs/WHATSAPP.md). | 1-2, 5, 8 |
-| `apps/api` | FastAPI. Owns all state: tenants, bookings, messages (calls in Phase 4). Serves the agent's tools over HTTP. | 3-4 |
+| `apps/api` | FastAPI. Owns all state: tenants, bookings, messages, calls, usage. Serves the agent's tools over HTTP and checks each business's call limits (`usage.py`). | 3-4, 9 |
 | `apps/web` | Next.js owner dashboard: sign-up wizard, calls (transcript, recording, summary, actions), bookings, messages, analytics, settings, calendar connect, test call. Only its server talks to the API (session = the API's JWT in an httpOnly cookie). | 7 |
-| `packages/shared` | Python code both agent and api import: `Settings` (env config) now; tenant config schemas and API models later. | 0+ |
+| `packages/shared` | Python code both agent and api import: `Settings` (env config), tenant config schema, API models, phone helpers, logging with secret redaction. | 0+ |
 | `evals` | Simulated callers that run scenarios against the agent in text mode and score the result. | 6 |
 | `tenants` | Example business configs (YAML), validated by `packages/shared`. | 2 |
 | `docker-compose.yml` | Local Postgres and Redis only. Our own services run on the host. | 0 |
@@ -168,6 +169,26 @@ sequenceDiagram
 
 The browser never holds the API token and never names a tenant: the dashboard's server reads
 the session cookie, and the API takes the tenant from the verified token (D33).
+
+### When a provider fails (Phase 9, D37)
+
+```mermaid
+flowchart LR
+    subgraph stt["Speech-to-text"]
+        g1[Groq Whisper] -->|error or 4 s| g2[Groq, once more] -->|error| fw[local faster-whisper]
+    end
+    subgraph llm["LLM (fallback transport)"]
+        m1[Groq 120b] -->|429 / 5xx / 5 s / bad key| m2[Groq 20b] --> m3[Gemini] -->|nothing answered| s[scripted: take a message]
+    end
+    subgraph tts["Text-to-speech"]
+        az[Azure] -->|error or 5 s| pp[local Piper]
+    end
+    guard{{NeverSilentGuard: any error left -> "sorry, could you say that again?"}}
+```
+
+A missing key at start-up skips straight to the fallback (no Groq key: STT local, LLM Gemini;
+no LLM key at all: scripted message-taker). Over its call limits (D38) a business's caller hears
+who to call instead, and the call ends.
 
 ## Ports (local)
 

@@ -59,3 +59,30 @@ def test_stdlib_logging_is_routed_to_json() -> None:
     line = json.loads(buf.getvalue().strip().splitlines()[-1])
     assert line["msg"] == "from stdlib"
     assert line["extra"]["stdlib"] == "uvicorn.error"
+
+
+def test_secrets_never_reach_a_log_line() -> None:
+    """Phase 9: configured secret values and key-shaped strings are masked everywhere."""
+    configure_logging("DEBUG", secrets=["my-agent-token-0123456789", "short"])
+    buf, handler_id = _capture()
+    groq_like = "gsk_" + "A1b2C3d4" * 4  # built here so this file holds no key-shaped text
+    try:
+        logger.bind(header=f"Bearer {'x' * 20}", nested={"k": [groq_like]}).info(
+            "token my-agent-token-0123456789 and short words stay"
+        )
+        try:
+            raise RuntimeError(f"401 for key {groq_like}")
+        except RuntimeError:
+            logger.exception("provider failed")
+    finally:
+        logger.remove(handler_id)
+        configure_logging("INFO", secrets=[])
+    out = buf.getvalue()
+    assert "my-agent-token-0123456789" not in out
+    assert groq_like not in out
+    assert "x" * 20 not in out
+    assert "[redacted]" in out
+    assert "short words stay" in out  # values under 8 characters are not masked
+    first, second = (json.loads(line) for line in out.strip().splitlines())
+    assert first["extra"]["nested"] == {"k": ["[redacted]"]}
+    assert second["exc_type"] == "RuntimeError" and second["exc"] == "401 for key [redacted]"
