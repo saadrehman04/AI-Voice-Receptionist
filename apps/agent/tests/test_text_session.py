@@ -76,7 +76,7 @@ async def test_scripted_booking_conversation(salon: TenantConfig, monday_9am: da
         r2 = await session.send("Sara, 0300 1234567")
         assert [c.name for c in r2.tool_calls] == ["create_booking"]
         assert "Shall I book that?" in r2.text
-        assert "0300 123 4567" in r2.text
+        assert "zero three zero zero, one two three, four five six seven" in r2.text
         assert backend.bookings == {}  # nothing written before the caller says yes
 
         r3 = await session.send("yes please")

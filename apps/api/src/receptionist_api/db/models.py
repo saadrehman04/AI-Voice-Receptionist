@@ -56,7 +56,8 @@ class Tenant(TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     config: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # validated TenantConfig
-    phone_number: Mapped[str | None] = mapped_column(String(20), unique=True)  # WhatsApp (Phase 8)
+    # = config.whatsapp_phone_number_id; unique so a WhatsApp call maps to one business
+    whatsapp_phone_number_id: Mapped[str | None] = mapped_column(String(32), unique=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 

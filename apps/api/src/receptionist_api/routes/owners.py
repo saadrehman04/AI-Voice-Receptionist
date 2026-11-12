@@ -20,7 +20,12 @@ from pydantic import BaseModel, EmailStr, Field
 from receptionist_api.auth import Owner, OwnerDep, create_token, verify_password
 from receptionist_api.calls import CallNotFoundError, CallRecords, since_days
 from receptionist_api.db.models import Booking, Call, Message, ToolCallRow, Turn
-from receptionist_api.tenants import EmailTakenError, TenantExistsError, TenantStore
+from receptionist_api.tenants import (
+    EmailTakenError,
+    TenantExistsError,
+    TenantStore,
+    WhatsAppNumberTakenError,
+)
 from receptionist_shared.tenant import TenantConfig
 
 auth_router = APIRouter(prefix="/v1", tags=["owners"])
@@ -49,6 +54,7 @@ def _secret(request: Request) -> str:
 
 
 StoreDep = Annotated[TenantStore, Depends(_store)]
+_NUMBER_TAKEN = "another business already uses that WhatsApp number"
 CallsDep = Annotated[CallRecords, Depends(_calls)]
 
 
@@ -94,6 +100,8 @@ async def onboarding(req: OnboardingRequest, store: StoreDep, request: Request) 
         raise _error(409, "tenant_exists", f"slug {req.tenant.slug!r} is taken") from exc
     except EmailTakenError as exc:
         raise _error(409, "email_taken", "an account with that email exists") from exc
+    except WhatsAppNumberTakenError as exc:
+        raise _error(409, "whatsapp_number_taken", _NUMBER_TAKEN) from exc
     owner = Owner(user_id, tenant_id, req.tenant.slug, str(req.owner_email).lower())
     return TokenResponse(access_token=create_token(owner, secret), tenant_slug=req.tenant.slug)
 
@@ -418,7 +426,10 @@ async def get_settings_(owner: OwnerDep, store: StoreDep) -> TenantConfig:
 async def put_settings(config: TenantConfig, owner: OwnerDep, store: StoreDep) -> TenantConfig:
     if config.slug != owner.tenant_slug:
         raise _error(403, "forbidden", "you can only edit your own business")
-    await store.update(owner.tenant_id, config)
+    try:
+        await store.update(owner.tenant_id, config)
+    except WhatsAppNumberTakenError as exc:
+        raise _error(409, "whatsapp_number_taken", _NUMBER_TAKEN) from exc
     return config
 
 

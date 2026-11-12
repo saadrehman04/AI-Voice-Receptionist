@@ -69,6 +69,7 @@ export interface TenantConfig {
   min_notice_min?: number;
   max_days_ahead?: number;
   calendar_id?: string | null;
+  whatsapp_phone_number_id?: string | null;
 }
 
 export interface Me {

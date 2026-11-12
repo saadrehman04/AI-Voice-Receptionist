@@ -86,6 +86,17 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
 - Open: a full 73-scenario run needs ~1.2M agent tokens, several free-tier days (or Groq's paid
   tier); `workshop-ur-book-oil-change` stayed inconclusive (rate limits).
 
+### Phase 8 (WhatsApp calling): built and verified with a simulated Meta; live number open
+- Webhook in the agent (signed, fail-closed), call answering over WebRTC (pre_accept/accept),
+  the normal pipeline per call (recorded, summarised, WhatsApp badge on the dashboard),
+  confirmation text after booking/move/cancel, number -> business mapping (unique column,
+  Settings field). Fake Meta (`make whatsapp-sim`) + a real-WebRTC CI test. D36, docs/WHATSAPP.md.
+- Live simulated calls against the real agent: answered in ~0.4 s, booked, confirmation sent,
+  agent hung up after goodbye. Found and fixed: English phone read-back dropped digits (now
+  spelled by the tool, like Urdu; D35).
+- Not ticked: the "done when" needs a real WhatsApp call on a Meta number, which the owner
+  chose to skip for now (steps in docs/WHATSAPP.md, section 2).
+
 ### Phase 7 (owner dashboard and onboarding): done 2026-11-12
 - apps/web: sign-up wizard (website draft -> services/FAQ -> hours -> languages -> account),
   /welcome (calendar connect + test call), Calls (transcript, recording, summary, actions),

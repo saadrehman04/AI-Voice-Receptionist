@@ -40,7 +40,7 @@ flowchart LR
 
 | Path | What it is | Phase |
 | --- | --- | --- |
-| `apps/agent` | Pipecat pipeline: audio in -> VAD -> STT -> LLM -> TTS -> audio out. Each provider sits behind an interface picked by config. | 1-2, 5 |
+| `apps/agent` | Pipecat pipeline: audio in -> VAD -> STT -> LLM -> TTS -> audio out. Each provider sits behind an interface picked by config. Also serves Meta's WhatsApp call webhook (`whatsapp/`, docs/WHATSAPP.md). | 1-2, 5, 8 |
 | `apps/api` | FastAPI. Owns all state: tenants, bookings, messages (calls in Phase 4). Serves the agent's tools over HTTP. | 3-4 |
 | `apps/web` | Next.js owner dashboard: sign-up wizard, calls (transcript, recording, summary, actions), bookings, messages, analytics, settings, calendar connect, test call. Only its server talks to the API (session = the API's JWT in an httpOnly cookie). | 7 |
 | `packages/shared` | Python code both agent and api import: `Settings` (env config) now; tenant config schemas and API models later. | 0+ |

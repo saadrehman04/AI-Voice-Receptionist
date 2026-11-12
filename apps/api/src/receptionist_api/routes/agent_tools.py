@@ -12,6 +12,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel
 
 from receptionist_api.booking_service import (
     BookingService,
@@ -241,3 +242,23 @@ async def end_call(
     queue: JobQueue = request.app.state.resources.queue
     job_id = await queue.enqueue(SUMMARIZE_CALL, {"tenant_id": str(tenant_id), "call_pk": str(pk)})
     return {"id": str(pk), "job_id": job_id}
+
+
+# Not under /tenants/{slug}: an incoming WhatsApp call only knows which number was called.
+whatsapp_router = APIRouter(
+    prefix="/v1/whatsapp", tags=["agent tools"], dependencies=[Depends(require_agent_token)]
+)
+
+
+class WhatsAppNumberOwner(BaseModel):
+    tenant: str
+
+
+@whatsapp_router.get("/numbers/{phone_number_id}", response_model=WhatsAppNumberOwner)
+async def whatsapp_number_owner(phone_number_id: str, request: Request) -> WhatsAppNumberOwner:
+    """Which business owns the WhatsApp number that was called (Phase 8)."""
+    registry: TenantRegistry = request.app.state.resources.tenants
+    tenant = registry.by_whatsapp_number(phone_number_id)
+    if tenant is None:
+        raise _error(404, "number_not_found", "no business uses that WhatsApp number")
+    return WhatsAppNumberOwner(tenant=tenant.slug)

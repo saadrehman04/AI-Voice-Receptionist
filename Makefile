@@ -6,7 +6,7 @@ WEB    := pnpm --dir apps/web
 PY_SRC := packages apps/agent apps/api evals
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
+.PHONY: whatsapp-sim help install up down logs agent api web test lint fmt evals latency test-models chat migrate worker bench traces
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
@@ -72,3 +72,7 @@ fmt: ## Auto-fix lint issues and format Python code
 
 evals: ## Run the simulated-caller eval suite (Phase 6)
 	$(UV_RUN) receptionist-evals
+
+whatsapp-sim: ## Call the agent over a simulated WhatsApp (fake Meta). Agent: WHATSAPP_GRAPH_URL=http://127.0.0.1:7870/v23.0 make agent
+	$(UV_RUN) python -m receptionist_agent.whatsapp.fake_meta $(ARGS)
+

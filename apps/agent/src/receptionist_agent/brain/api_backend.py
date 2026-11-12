@@ -218,6 +218,20 @@ class ApiBackend:
     async def tenant_config(self, slug: str) -> TenantConfig:
         return TenantConfig.model_validate(await self._call("GET", slug, "/config"))
 
+    async def whatsapp_tenant(self, phone_number_id: str) -> TenantConfig | None:
+        """The business that owns a WhatsApp number (Phase 8), or None if no business does."""
+        try:
+            response = await self._client.get(
+                f"/v1/whatsapp/numbers/{phone_number_id}", headers=self._headers
+            )
+        except httpx.HTTPError as exc:
+            raise BackendUnavailableError(f"api unreachable: {type(exc).__name__}") from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise BackendUnavailableError(f"api error {response.status_code}")
+        return await self.tenant_config(str(response.json()["tenant"]))
+
     async def lookup(
         self, tenant: TenantConfig, question: str, *, language: str
     ) -> KnowledgeResult:

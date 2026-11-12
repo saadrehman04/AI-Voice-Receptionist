@@ -190,6 +190,7 @@ def create_app(resources: Resources | None = None) -> FastAPI:
         return Health(status="ok", environment=get_settings().environment, version=app.version)
 
     app.include_router(agent_tools.router)
+    app.include_router(agent_tools.whatsapp_router)
     app.include_router(owners.auth_router)
     app.include_router(owners.dashboard)
     app.include_router(setup.onboarding)

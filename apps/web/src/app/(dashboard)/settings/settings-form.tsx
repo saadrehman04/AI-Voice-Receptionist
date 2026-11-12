@@ -9,6 +9,7 @@ import {
   HoursSection,
   ServicesSection,
   VoiceSection,
+  WhatsAppSection,
 } from "@/components/tenant-editor";
 import { ErrorNote, buttonClass } from "@/components/ui";
 import { hoursToForm, toPayload, validateConfig } from "@/lib/tenant-form";
@@ -53,6 +54,7 @@ export function SettingsForm({ initial }: { initial: TenantConfig }) {
       <HoursSection {...props} />
       <FaqSection {...props} />
       <VoiceSection {...props} />
+      <WhatsAppSection {...props} />
       <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:mx-0 sm:rounded-xl sm:border">
         {errors.length ? (
           <ErrorNote>

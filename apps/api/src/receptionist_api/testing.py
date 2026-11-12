@@ -179,6 +179,7 @@ PASSWORD = "a-long-enough-password"  # noqa: S105 - test-only value
 def tenant_payload(slug: str, name: str) -> dict[str, Any]:
     data = yaml.safe_load((REPO / "tenants/demo-salon.yaml").read_text(encoding="utf-8"))
     data.update(slug=slug, business_name=name)
+    data.pop("whatsapp_phone_number_id", None)  # one number, one business: a copy can't share it
     return dict(data)
 
 

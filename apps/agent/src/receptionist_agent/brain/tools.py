@@ -43,7 +43,7 @@ from receptionist_agent.brain.state import CallState, Intent, StateError
 from receptionist_agent.language import caller_language
 from receptionist_agent.tracing import tool_span
 from receptionist_shared.availability import spoken_slot
-from receptionist_shared.phone import normalize_pk_phone, spoken_digits, spoken_digits_ur
+from receptionist_shared.phone import normalize_pk_phone, spoken_digits_en, spoken_digits_ur
 from receptionist_shared.tenant import Service, TenantConfig
 
 ToolResult = dict[str, Any]
@@ -249,7 +249,7 @@ class ReceptionistTools:
         )
 
     def _spoken_phone(self, phone: str) -> str:
-        return spoken_digits_ur(phone) if self.state.language == "ur" else spoken_digits(phone)
+        return spoken_digits_ur(phone) if self.state.language == "ur" else spoken_digits_en(phone)
 
     def _say(self, step: str) -> str:
         """A read-back instruction, in the caller's language. The read-back details are
@@ -260,7 +260,7 @@ class ReceptionistTools:
                 "and name in Urdu, and the phone number exactly as read_back gives it, word "
                 "for word."
             )
-        return step
+        return f"{step} Say the phone number exactly as read_back gives it, word for word."
 
     async def _search(self, service: Service, day: date, preferred: time | None) -> Availability:
         return await self.backend.availability(

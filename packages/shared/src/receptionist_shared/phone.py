@@ -49,7 +49,16 @@ def spoken_digits(e164: str) -> str:
     return national
 
 
+ENGLISH_DIGITS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 URDU_DIGITS = ("صفر", "ایک", "دو", "تین", "چار", "پانچ", "چھ", "سات", "آٹھ", "نو")
+
+
+def spoken_digits_en(e164: str) -> str:
+    """'+923215550101' -> 'zero three two one, five five five, zero one zero one'. Spelled out
+    for the same reason as `spoken_digits_ur`: seen live (simulated WhatsApp call), a model
+    copying "0321 555 0101" into words dropped two digits."""
+    groups = spoken_digits(e164).split()
+    return ", ".join(" ".join(ENGLISH_DIGITS[int(d)] for d in g if d.isdigit()) for g in groups)
 
 
 def spoken_digits_ur(e164: str) -> str:

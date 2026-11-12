@@ -59,6 +59,7 @@ Run from the repo root. `make help` lists everything.
 - Single test: `uv run --all-packages pytest apps/api/tests/test_health.py -k ok`
 - `make lint`: ruff check, ruff format --check, mypy (strict), eslint, `next typegen && tsc --noEmit`
 - `make fmt`: ruff --fix + ruff format
+- `make whatsapp-sim`: call the agent over a simulated WhatsApp (fake Meta; `ARGS='--say "..." --say "..."'`). Start the agent with `WHATSAPP_GRAPH_URL=http://127.0.0.1:7870/v23.0 make agent`; see docs/WHATSAPP.md
 - `make evals`: simulated-caller eval suite (placeholder until Phase 6)
 - Add a Python dependency: `uv add --package receptionist-api <pkg>` (or receptionist-agent / receptionist-shared)
 - Add a web dependency: `pnpm --dir apps/web add <pkg>`

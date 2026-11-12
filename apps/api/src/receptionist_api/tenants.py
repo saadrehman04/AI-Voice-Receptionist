@@ -31,6 +31,10 @@ class EmailTakenError(ValueError):
     pass
 
 
+class WhatsAppNumberTakenError(ValueError):
+    """Another business already uses this WhatsApp number."""
+
+
 class TenantRegistry:
     """Slug -> config and slug -> row id, in memory."""
 
@@ -47,6 +51,12 @@ class TenantRegistry:
 
     def id_of(self, slug: str) -> uuid.UUID | None:
         return self._ids.get(slug)
+
+    def by_whatsapp_number(self, phone_number_id: str) -> TenantConfig | None:
+        return next(
+            (t for t in self._by_slug.values() if t.whatsapp_phone_number_id == phone_number_id),
+            None,
+        )
 
     def all(self) -> list[TenantConfig]:
         return list(self._by_slug.values())
@@ -70,6 +80,18 @@ async def _sync_services(session: AsyncSession, tenant_id: uuid.UUID, tenant: Te
     )
 
 
+async def _check_whatsapp_number(
+    session: AsyncSession, tenant: TenantConfig, own_id: uuid.UUID | None
+) -> None:
+    """A clear error before the unique constraint would raise an IntegrityError."""
+    number = tenant.whatsapp_phone_number_id
+    if number is None:
+        return
+    other = await session.scalar(select(Tenant.id).where(Tenant.whatsapp_phone_number_id == number))
+    if other is not None and other != own_id:
+        raise WhatsAppNumberTakenError(number)
+
+
 class TenantStore:
     def __init__(
         self, sessions: async_sessionmaker[AsyncSession], registry: TenantRegistry
@@ -87,6 +109,7 @@ class TenantStore:
                         slug=tenant.slug,
                         name=tenant.business_name,
                         config=tenant.model_dump(mode="json"),
+                        whatsapp_phone_number_id=tenant.whatsapp_phone_number_id,
                     )
                     session.add(row)
                     await session.flush()
@@ -112,8 +135,12 @@ class TenantStore:
                 raise TenantExistsError(tenant.slug)
             if await session.scalar(select(User.id).where(User.email == email)):
                 raise EmailTakenError(email)
+            await _check_whatsapp_number(session, tenant, None)
             row = Tenant(
-                slug=tenant.slug, name=tenant.business_name, config=tenant.model_dump(mode="json")
+                slug=tenant.slug,
+                name=tenant.business_name,
+                config=tenant.model_dump(mode="json"),
+                whatsapp_phone_number_id=tenant.whatsapp_phone_number_id,
             )
             session.add(row)
             await session.flush()
@@ -130,6 +157,8 @@ class TenantStore:
             row = await session.get(Tenant, tenant_id)
             if row is None or row.slug != tenant.slug:
                 raise ValueError("slug cannot change")
+            await _check_whatsapp_number(session, tenant, tenant_id)
+            row.whatsapp_phone_number_id = tenant.whatsapp_phone_number_id
             row.config = tenant.model_dump(mode="json")
             row.name = tenant.business_name
             await _sync_services(session, tenant_id, tenant)

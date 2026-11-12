@@ -34,6 +34,7 @@ async function CallList() {
             <div className="flex gap-3 text-xs text-zinc-500 dark:text-zinc-400 sm:w-48 sm:justify-end">
               <span>{callerLabel(c.caller_phone, c.channel)}</span>
               <span className="tabular-nums">{formatDuration(c.duration_secs)}</span>
+              {c.channel === "whatsapp" ? <Badge tone="green">WhatsApp</Badge> : null}
               {c.language ? <span className="uppercase">{c.language}</span> : null}
             </div>
           </Link>

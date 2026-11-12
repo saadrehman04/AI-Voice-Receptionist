@@ -79,3 +79,6 @@ faq:
 booking_buffer_min: 15
 min_notice_min: 60
 max_days_ahead: 30
+
+# A made-up id: the local Meta simulator rings this "number" (docs/WHATSAPP.md).
+whatsapp_phone_number_id: "100000000000001"

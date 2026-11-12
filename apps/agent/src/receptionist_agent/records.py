@@ -56,9 +56,12 @@ class CallRecorder(Protocol):
 class MemoryRecorder:
     """Keeps records in lists. Used with the in-memory backend and in tests."""
 
-    def __init__(self, call_id: str, channel: str = "webrtc") -> None:
+    def __init__(
+        self, call_id: str, channel: str = "webrtc", caller_phone: str | None = None
+    ) -> None:
         self.call_id = call_id
         self.channel = channel
+        self.caller_phone = caller_phone  # E.164; None for browser calls
         self.started = False
         self.turns: list[TurnIn] = []
         self.tools: list[ToolCallIn] = []
@@ -121,8 +124,14 @@ class MemoryRecorder:
 class ApiCallRecorder(MemoryRecorder):
     """Same bookkeeping as MemoryRecorder, plus a background sender to the api."""
 
-    def __init__(self, call_id: str, send: Send, channel: str = "webrtc") -> None:
-        super().__init__(call_id, channel)
+    def __init__(
+        self,
+        call_id: str,
+        send: Send,
+        channel: str = "webrtc",
+        caller_phone: str | None = None,
+    ) -> None:
+        super().__init__(call_id, channel, caller_phone)
         self._send = send
         self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
@@ -146,7 +155,12 @@ class ApiCallRecorder(MemoryRecorder):
     async def start(self) -> None:
         await super().start()
         self._task = asyncio.create_task(self._sender())
-        body = CallStart(call_id=self.call_id, channel=self.channel, started_at=now())
+        body = CallStart(
+            call_id=self.call_id,
+            channel=self.channel,
+            caller_phone=self.caller_phone,
+            started_at=now(),
+        )
         self._put("", body.model_dump(mode="json"))
 
     def caller_turn(self, text: str) -> None:

@@ -407,3 +407,27 @@ Short entries, newest last: what we decided, why, and what else we considered.
   (quota); asking the model to restate the weekday in the tool call (one more thing to get
   wrong).
 
+## D36. WhatsApp calls: webhook in the agent, our own Graph client, tested against a fake Meta (Phase 8)
+- **Decision:** `POST /whatsapp` is mounted on the agent's FastAPI app (Pipecat's runner), since
+  the call's audio must end up in that process. It rejects anything not signed with the app
+  secret, answers Meta at once and accepts the call in the background (Pipecat's
+  `SmallWebRTCConnection` makes the SDP answer; we strip non-SHA-256 fingerprints, then
+  `pre_accept` and `accept`). The call runs through the normal `run_bot` with
+  `channel="whatsapp"` and the caller's number. Meta's API is called by a small client of our own
+  with a configurable base URL. Each business stores its Meta phone-number id; a unique column
+  maps an incoming call to exactly one business. Bookings, moves and cancellations are confirmed
+  by WhatsApp text built from the stored booking.
+- **Why not Pipecat's built-in WhatsApp routes:** they serve one business (one number from env),
+  hard-code graph.facebook.com and accept unsigned webhooks when no secret is set. We need
+  multi-tenant lookup, a fake Meta, and fail-closed signatures.
+- **Testing without Meta (owner's choice: portfolio, no live number yet):** `fake_meta.py` serves
+  the Graph endpoints and plays a caller over a real aiortc WebRTC peer, in Meta's wire formats.
+  The CI test makes a real WebRTC call through the real webhook and call manager (an echo
+  pipeline stands in for the receptionist); the CLI demo calls the real agent. Switching to
+  Meta is configuration (docs/WHATSAPP.md).
+- **Limits:** the fake can't reproduce Meta's ICE-lite media servers or its timing exactly; a
+  live call on a Meta test number is the remaining check. The confirmation text relies on the
+  24-hour window a customer's call opens (provider docs; Meta's own page didn't say).
+- **Alternatives:** a SIP gateway (paid, more moving parts); Twilio's WhatsApp calling (paid);
+  Pipecat's routes as-is (single business, see above).
+

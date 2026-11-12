@@ -20,6 +20,8 @@ from receptionist_shared.tenant import TenantConfig
 
 WED = "2026-11-18"
 PHONE = "0300 1234567"
+# read-backs spell the digits out (D35)
+SPELLED_PHONE = "zero three zero zero, one two three, four five six seven"
 
 
 @pytest.fixture
@@ -128,7 +130,7 @@ async def test_booking_needs_readback_then_yes(
 
     first = await tools.run("create_booking", booking_args(start))
     assert first["booked"] is False
-    assert first["read_back"]["phone"] == "0300 123 4567"
+    assert first["read_back"]["phone"] == SPELLED_PHONE
     assert first["read_back"]["name"] == "Sara"
     assert backend.bookings == {}
 
@@ -209,7 +211,9 @@ async def test_readback_step_follows_the_callers_language(
     assert "Urdu script" in urdu["next_step"]
     # the tool spells the number out digit by digit; the LLM only copies it
     assert urdu["read_back"]["phone"] == "صفر تین صفر صفر، ایک دو تین، چار پانچ چھ سات"
-    assert english["read_back"]["phone"] == "0300 123 4567"
+    assert (
+        english["read_back"]["phone"] == "zero three zero zero, one two three, four five six seven"
+    )
     assert tools.state.language == "ur"
 
 

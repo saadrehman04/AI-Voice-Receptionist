@@ -209,3 +209,36 @@ def test_day_stats_counts_bookings_by_local_day() -> None:
         ("2026-11-18", 2, 1),
     ]
     assert after_hours == 2
+
+
+# ---------------------------------------------------------------- WhatsApp numbers (Phase 8)
+
+
+async def test_whatsapp_number_maps_to_one_business(api: httpx.AsyncClient) -> None:
+    token_a = await onboard(api, "wa-one", "wa1@example.com")
+    token_b = await onboard(api, "wa-two", "wa2@example.com")
+    settings = (await api.get("/v1/dashboard/settings", headers=bearer(token_a))).json()
+    settings["whatsapp_phone_number_id"] = "123456789012345"
+    r = await api.put("/v1/dashboard/settings", json=settings, headers=bearer(token_a))
+    assert r.status_code == 200, r.text
+
+    owner = await api.get("/v1/whatsapp/numbers/123456789012345")  # the agent's lookup
+    assert owner.status_code == 200 and owner.json() == {"tenant": "wa-one"}
+    assert (await api.get("/v1/whatsapp/numbers/999")).status_code == 404
+    no_token = await api.get("/v1/whatsapp/numbers/123456789012345", headers={"X-Agent-Token": ""})
+    assert no_token.status_code == 401
+
+    theirs = (await api.get("/v1/dashboard/settings", headers=bearer(token_b))).json()
+    theirs["whatsapp_phone_number_id"] = "123456789012345"
+    taken = await api.put("/v1/dashboard/settings", json=theirs, headers=bearer(token_b))
+    assert taken.status_code == 409 and taken.json()["detail"]["code"] == "whatsapp_number_taken"
+
+    # re-saving your own number is fine; so is giving it up
+    assert (
+        await api.put("/v1/dashboard/settings", json=settings, headers=bearer(token_a))
+    ).status_code == 200
+    settings["whatsapp_phone_number_id"] = None
+    assert (
+        await api.put("/v1/dashboard/settings", json=settings, headers=bearer(token_a))
+    ).status_code == 200
+    assert (await api.get("/v1/whatsapp/numbers/123456789012345")).status_code == 404

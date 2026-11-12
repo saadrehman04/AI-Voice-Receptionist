@@ -321,3 +321,27 @@ export function VoiceSection({ config, onChange }: EditorProps) {
     </Section>
   );
 }
+
+export function WhatsAppSection({ config, onChange }: EditorProps) {
+  return (
+    <Section
+      id="whatsapp"
+      title="WhatsApp"
+      hint="Calls to this WhatsApp number are answered by the receptionist. Leave empty to use browser calls only."
+    >
+      <Field
+        label="WhatsApp phone number ID"
+        hint="From Meta: developers.facebook.com → your app → WhatsApp → API Setup → Phone number ID. It is not the phone number itself. Setup steps: docs/WHATSAPP.md."
+      >
+        <input
+          inputMode="numeric"
+          className={inputClass}
+          value={config.whatsapp_phone_number_id ?? ""}
+          placeholder="e.g. 106540352242922"
+          onChange={(e) => onChange({ ...config, whatsapp_phone_number_id: e.target.value.replace(/\D/g, "") || null })}
+        />
+      </Field>
+    </Section>
+  );
+}
+

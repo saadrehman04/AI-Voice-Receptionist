@@ -3,6 +3,7 @@
 Starts Pipecat's development runner, which serves:
   - http://<AGENT_HOST>:<AGENT_PORT>/client  the prebuilt browser voice client
   - /start and /api/offer                    WebRTC signaling (peer-to-peer, no media server)
+  - /whatsapp                                Meta's WhatsApp call webhook (whatsapp/routes.py)
 
 The runner looks up `bot` on the `__main__` module, which is why this file re-exports it
 and why the agent must be started with `python -m`, not through a console-script wrapper.
@@ -48,7 +49,12 @@ def main() -> None:
         raise SystemExit(2) from exc
     logger.info("default tenant loaded", tenant=tenant.slug, languages=tenant.languages)
 
+    from pipecat.runner.run import app as runner_app
     from pipecat.runner.run import main as run_pipecat_runner
+
+    from receptionist_agent.whatsapp.routes import install as install_whatsapp
+
+    install_whatsapp(runner_app, settings)  # POST /whatsapp: Meta's call webhook (Phase 8)
 
     sys.argv = runner_argv(settings.agent_host, settings.agent_port, sys.argv[1:])
     logger.info(f"open http://{settings.agent_host}:{settings.agent_port}/client to talk")

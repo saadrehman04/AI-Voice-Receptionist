@@ -118,6 +118,8 @@ class TenantConfig(_Strict):
     min_notice_min: Annotated[int, Field(ge=0)] = 60
     max_days_ahead: Annotated[int, Field(gt=0, le=365)] = 30
     calendar_id: str | None = None  # Google Calendar id (Phase 3)
+    # Meta's "Phone number ID" for the business's WhatsApp number (Phase 8), not the number
+    whatsapp_phone_number_id: str | None = Field(default=None, pattern=r"^\d{5,30}$")
 
     @field_validator("slug")
     @classmethod

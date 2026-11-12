@@ -21,6 +21,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -110,15 +111,22 @@ class Call:
     tracing: bool = False  # OpenTelemetry spans for this call (OTEL_ENABLED)
 
 
-def make_recorder(call_id: str, tenant: TenantConfig, backend: BookingBackend) -> CallRecorder:
+def make_recorder(
+    call_id: str,
+    tenant: TenantConfig,
+    backend: BookingBackend,
+    *,
+    channel: str = "webrtc",
+    caller_phone: str | None = None,
+) -> CallRecorder:
     """Records go to the api when we have one; otherwise they stay in memory."""
     if isinstance(backend, ApiBackend):
 
         async def send(path: str, body: dict[str, Any]) -> None:
             await backend.record(tenant, path, body)
 
-        return ApiCallRecorder(call_id, send)
-    return MemoryRecorder(call_id)
+        return ApiCallRecorder(call_id, send, channel, caller_phone)
+    return MemoryRecorder(call_id, channel, caller_phone)
 
 
 def tts_stage(services: Services) -> list[FrameProcessor]:
@@ -217,6 +225,8 @@ def prepare_call(
     backend: BookingBackend | None = None,
     now: datetime | None = None,
     on_tool_call: ToolCallHook | None = None,
+    channel: str = "webrtc",
+    caller_phone: str | None = None,
 ) -> Call:
     """Blocking setup for one call (loads the tenant and local models). Run it in a thread.
 
@@ -228,7 +238,7 @@ def prepare_call(
     prompt = build_system_prompt(tenant, frozen or tenant.now())
     services = build_services(settings, prompt, urdu="ur" in tenant.languages)
     state = CallState()
-    recorder = make_recorder(call_id, tenant, backend)
+    recorder = make_recorder(call_id, tenant, backend, channel=channel, caller_phone=caller_phone)
 
     def record_tool(
         name: str, args: dict[str, Any], result: dict[str, Any], ok: bool, duration_ms: int
@@ -289,14 +299,33 @@ async def run_bot(
     call_id: str,
     tenant_slug: str | None = None,
     handle_sigint: bool = False,
+    channel: str = "webrtc",
+    caller_phone: str | None = None,
+    on_tool_call: ToolCallHook | None = None,
+    on_ready: Callable[[Call], None] | None = None,
 ) -> None:
-    """Run one call until the caller hangs up."""
+    """Run one call until the caller hangs up. `on_ready` sees the call once it's set up."""
     with logger.contextualize(call_id=call_id):
-        logger.info("call starting", providers=describe_providers(settings), tenant=tenant_slug)
+        logger.info(
+            "call starting",
+            providers=describe_providers(settings),
+            tenant=tenant_slug,
+            channel=channel,
+        )
         # Local models load inside constructors (seconds of CPU): keep that off the loop.
         call = await asyncio.to_thread(
-            prepare_call, settings, call_id=call_id, tenant_slug=tenant_slug
+            partial(
+                prepare_call,
+                settings,
+                call_id=call_id,
+                tenant_slug=tenant_slug,
+                on_tool_call=on_tool_call,
+                channel=channel,
+                caller_phone=caller_phone,
+            )
         )
+        if on_ready is not None:
+            on_ready(call)
         writer = JsonlTurnWriter(Path(settings.turns_log_path))
 
         async def on_turn_timing(record: dict[str, Any]) -> None:

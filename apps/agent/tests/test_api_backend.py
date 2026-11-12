@@ -116,7 +116,11 @@ async def test_call_is_recorded_and_summarised_end_to_end(
     onboard = await api.post(
         "/v1/onboarding",
         json={
-            "tenant": {**salon.model_dump(mode="json"), "slug": "other-salon"},
+            "tenant": {
+                **salon.model_dump(mode="json"),
+                "slug": "other-salon",
+                "whatsapp_phone_number_id": None,  # numbers are unique per business
+            },
             "owner_email": "o@example.com",
             "password": "a-long-enough-password",
         },

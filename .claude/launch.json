@@ -1,8 +1,42 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "web", "runtimeExecutable": "pnpm", "runtimeArgs": ["--dir", "apps/web", "dev"], "port": 3000 },
-    { "name": "api", "runtimeExecutable": "make", "runtimeArgs": ["api"], "port": 8000 },
-    { "name": "agent", "runtimeExecutable": "make", "runtimeArgs": ["agent"], "port": 7860 }
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "api"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "agent",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "agent"
+      ],
+      "port": 7860
+    },
+    {
+      "name": "agent-wa-sim",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "agent"
+      ],
+      "env": {
+        "WHATSAPP_GRAPH_URL": "http://127.0.0.1:7870/v23.0"
+      },
+      "port": 7860
+    }
   ]
 }

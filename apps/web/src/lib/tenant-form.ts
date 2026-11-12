@@ -132,6 +132,9 @@ export function problemsByArea(config: TenantConfig, hours?: HoursForm): Record<
   let area: Area = "business";
   const errors = { push: (e: string) => out[area].push(e) };
   if (!config.business_name.trim()) errors.push("Enter the business name.");
+  const wa = config.whatsapp_phone_number_id?.trim();
+  if (wa && !/^\d{5,30}$/.test(wa))
+    errors.push("The WhatsApp phone number ID is the long number from Meta's API Setup page (digits only).");
   if (!SLUG_RE.test(config.slug))
     errors.push("The web address name may only use lowercase letters, digits and dashes.");
   area = "voice";
@@ -194,6 +197,7 @@ export function toPayload(config: TenantConfig, hours: HoursForm): Record<string
     ...config,
     business_name: config.business_name.trim(),
     address: config.address?.trim() || null,
+    whatsapp_phone_number_id: config.whatsapp_phone_number_id?.trim() || null,
     opening_hours: hoursFromForm(hours),
     services: config.services.map((s) => ({
       ...s,

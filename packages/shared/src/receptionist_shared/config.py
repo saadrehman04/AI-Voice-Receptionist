@@ -131,10 +131,15 @@ class Settings(BaseSettings):
     google_service_account_file: str | None = None
 
     # --- WhatsApp Business Platform (phase 8) ---
+    # One app (token, secret) serves every business; each tenant names its own number
+    # (TenantConfig.whatsapp_phone_number_id). WHATSAPP_PHONE_NUMBER_ID is only the number the
+    # local Meta simulator rings by default.
     whatsapp_access_token: SecretStr | None = None
     whatsapp_phone_number_id: str | None = None
     whatsapp_app_secret: SecretStr | None = None
     whatsapp_verify_token: SecretStr | None = None
+    # Meta's Graph API; the simulator (`make whatsapp-sim`) serves a stand-in at a local URL.
+    whatsapp_graph_url: str = "https://graph.facebook.com/v23.0"
 
     @field_validator("jwt_secret", "agent_api_token")
     @classmethod

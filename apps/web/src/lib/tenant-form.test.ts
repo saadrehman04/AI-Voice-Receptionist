@@ -86,6 +86,11 @@ describe("validateConfig", () => {
     );
   });
 
+  it("checks the WhatsApp number id is Meta's digits-only id", () => {
+    expect(validateConfig({ ...ready(), whatsapp_phone_number_id: "106540352242922" })).toEqual([]);
+    expect(validateConfig({ ...ready(), whatsapp_phone_number_id: "+92 300" })).toHaveLength(1);
+  });
+
   it("needs an Urdu greeting only when Urdu is on", () => {
     const c = { ...ready(), greeting: { en: "Hello", ur: "" } };
     expect(validateConfig(c)).toEqual(["Enter the Urdu greeting (or turn Urdu off)."]);
