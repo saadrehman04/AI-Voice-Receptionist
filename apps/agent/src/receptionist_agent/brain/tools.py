@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import time as time_module
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any, Literal
 
 from loguru import logger
@@ -202,6 +202,9 @@ class ReceptionistTools:
         self.call_id = call_id
         self._clock = clock or tenant.now
         self._on_tool_call = on_tool_call
+        # (start, end, service) of every booking made in this call, so a slot this caller's own
+        # booking fills isn't blamed on "another caller" (seen live: blow-dry then facial at 7).
+        self._booked_here: list[tuple[datetime, datetime, str]] = []
         self.handlers: dict[str, Handler] = {
             "check_availability": self.check_availability,
             "create_booking": self.create_booking,
@@ -238,10 +241,12 @@ class ReceptionistTools:
     def _phone(self, raw: str | None) -> str | None:
         return normalize_pk_phone(raw) if raw else None
 
-    def _wrong_weekday(self, start: datetime) -> ToolResult | None:
-        """Refuse a start on a weekday nobody mentioned (seen live: the caller asked for
+    def _wrong_weekday(self, start: date) -> ToolResult | None:
+        """Refuse a date on a weekday nobody mentioned (seen live: the caller asked for
         Thursday and the model passed Monday's date). Days the agent offered count too, so an
-        alternative the caller accepted with a plain "yes" still goes through."""
+        alternative the caller accepted with a plain "yes" still goes through. Checked when
+        looking slots up as well as when booking: seen live, the model looked up Friday for a
+        caller who said Thursday and then offered those times as "Thursday"."""
         days = self.state.days_in_play
         if days is None or start.weekday() in days:
             return None
@@ -305,6 +310,27 @@ class ReceptionistTools:
             )
         return bookings[0]
 
+    async def _slot_not_free(self, service: Service, start: datetime) -> ToolResult:
+        """Why a read-back hold failed: this caller's own booking, or someone else."""
+        end = start + timedelta(minutes=service.duration_min)
+        for own_start, own_end, own_service in self._booked_here:
+            if own_start < end and start < own_end:
+                found = await self._search(service, own_end.date(), own_end.time())
+                return _err(
+                    f"that time overlaps this caller's own {own_service} booking at "
+                    f"{spoken_slot(own_start)}, and the business takes one appointment at a time",
+                    options=self._offer(found.options),
+                    hint=(
+                        f"Tell the caller their {own_service} already takes that time, and offer "
+                        "these times instead (the first ones follow straight after it)."
+                    ),
+                )
+        return _err(
+            "another caller is booking that time right now",
+            options=await self._alternatives(service, start),
+            hint="Apologise and offer these instead.",
+        )
+
     # -- tools
 
     async def check_availability(self, args: Mapping[str, Any]) -> ToolResult:
@@ -321,6 +347,9 @@ class ReceptionistTools:
                 preferred = time.fromisoformat(pt)
             except ValueError:
                 return _err("preferred_time must be HH:MM")
+
+        if wrong := self._wrong_weekday(day):
+            return wrong
 
         if self.state.intent not in (Intent.RESCHEDULE,):
             self.state.set_intent(Intent.BOOK)
@@ -395,11 +424,7 @@ class ReceptionistTools:
                 self.tenant, service=service.name, start=start, call_id=self.call_id
             ):
                 self.state.clear_pending()
-                return _err(
-                    "another caller is booking that time right now",
-                    options=await self._alternatives(service, start),
-                    hint="Apologise and offer these instead.",
-                )
+                return await self._slot_not_free(service, start)
             self.state.prepare("book", details)
             return {
                 "ok": True,
@@ -434,6 +459,9 @@ class ReceptionistTools:
             )
         self.state.mark_booked(booking.id)
         self.state.clear_pending()
+        self._booked_here.append(
+            (start, start + timedelta(minutes=service.duration_min), service.name)
+        )
         logger.info("booking created", booking_id=booking.id, service=service.name)
         return {"ok": True, "booked": True, **self._describe(booking)}
 

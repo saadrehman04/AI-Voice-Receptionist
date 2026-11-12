@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -319,6 +319,25 @@ async def test_slot_taken_by_another_caller(
     assert len(backend.bookings) == 1
 
 
+async def test_own_booking_at_that_time_is_not_blamed_on_another_caller(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Seen live: a blow-dry booked at 7, then a facial at 7 was refused as "another caller is
+    booking that time". The caller's own booking fills it; say so and offer times after it."""
+    tools = make_tools(salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]
+    assert (await book(tools, start))["booked"] is True  # a 45-minute haircut
+    facial = booking_args(start, service="Facial")
+    result = await tools.run("create_booking", facial)
+    assert result["ok"] is False
+    assert "another caller" not in result["error"]
+    assert "own Haircut booking" in result["error"]
+    after = datetime.fromisoformat(start) + timedelta(minutes=45)
+    assert result["options"]
+    assert all(datetime.fromisoformat(o["start"]) >= after for o in result["options"])
+    assert len(backend.bookings) == 1
+
+
 async def test_reschedule_flow(
     salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
 ) -> None:
@@ -455,6 +474,23 @@ async def test_booking_on_a_weekday_nobody_asked_for_is_refused(
     assert ok["ok"] and ok["booked"] is False
     # no weekday named at all ("tomorrow", "the 18th"): no check
     assert (await tools.run("create_booking", booking_args(start), days_in_play=None))["ok"]
+
+
+async def test_looking_up_a_weekday_nobody_asked_for_is_refused(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Seen live: the caller said Thursday, the model looked up Friday and offered those times
+    as "Thursday". Refusing the lookup stops the wrong day being said at all."""
+    tools = make_tools(salon, backend, monday_9am)
+    args = {"service": "haircut", "date": WED, "preferred_time": "14:00"}
+    refused = await tools.run("check_availability", args, days_in_play=frozenset({3}))
+    assert refused["ok"] is False
+    assert "is a Wednesday, but the caller asked for Thursday" in refused["error"]
+    assert tools.state.offered_slots == []  # nothing offered from the wrong day
+
+    ok = await tools.run("check_availability", args, days_in_play=frozenset({2}))
+    assert ok["ok"] and ok["available"]
+    assert (await tools.run("check_availability", args, days_in_play=None))["ok"]
 
 
 async def test_reschedule_to_a_weekday_nobody_asked_for_is_refused(
