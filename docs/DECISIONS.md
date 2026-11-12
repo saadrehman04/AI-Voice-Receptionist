@@ -479,3 +479,22 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** token-based limits (closer to cost, but owners think in calls and minutes);
   limits in the agent process (lost on restart, wrong with several agents); refusing calls
   silently (the caller deserves to know who to call).
+
+## D39. Fixes from the first live spoken call (2026-11-12)
+- **Decision:** (1) the LLM fallback lets a token budget that only *looks* short (from response
+  headers) reorder targets of the same provider, but never puts another provider first; only a
+  real 429 or error (a cool-down) does. (2) `check_availability` refuses a date whose weekday the
+  caller didn't name, the same check `create_booking` already had (D35). (3) A read-back hold that
+  fails because of this caller's own booking says so and offers times right after it, instead of
+  "another caller is booking that time".
+- **Why:** in a 3.5-minute browser call that booked a blow-dry: three quick requests made both
+  Groq models look short, so Gemini went first, took 10 s, and timed out at 10 s on the next
+  request; the caller heard "One moment" and then 21 s of silence before Groq answered in 0.6 s.
+  The caller said Thursday, the model looked up Friday and offered those times as "Thursday"
+  (the booking check caught it, but the wrong day had been said aloud). A facial at the same
+  time as the caller's own blow-dry was blamed on another caller.
+- **Consequence:** when Groq really is out of tokens, each request now pays one quick 429 per
+  Groq model (~0.2 s) before Gemini, until the cool-down from `retry-after` takes over. A wrong
+  date costs one more LLM round trip at lookup time rather than a wrong day spoken.
+- **Alternatives:** shorter Gemini timeout (cuts healthy slow answers: D37); racing Groq and
+  Gemini in parallel (doubles token use on the free tiers); trusting the estimate (what failed).

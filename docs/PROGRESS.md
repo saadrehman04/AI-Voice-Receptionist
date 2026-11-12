@@ -61,8 +61,9 @@ Tick a phase only when its "done when" check in BUILD_GUIDE.md passes.
   system test agent -> api -> Postgres -> queue -> worker -> dashboard; real api + worker processes.
 - Live test 2026-11-12: the spoken call landed in Postgres with 28 transcript turns, timings, 9 tool
   calls, outcome "booked" and an LLM summary from the worker.
-- Open: one turn of that call waited 21 s after "One moment": with Groq's token budget estimated
-  short, Gemini was tried first and took 10 s twice (found in the live test, not yet fixed).
+- The call found three bugs, fixed in D39: Gemini tried before Groq on a budget estimate (21 s of
+  silence), a looked-up Friday offered as "Thursday", and the caller's own booking blamed on
+  "another caller".
 
 ### Phase 5 (latency, barge-in): done 2026-11-11
 - Built: `make bench` (20 utterances through the real pipeline over a fake transport, P50/P95 per
