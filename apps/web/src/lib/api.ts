@@ -1,6 +1,7 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 
 import { getToken } from "./session";
 import type {
@@ -72,6 +73,9 @@ export async function apiFetch<T>(
 
 /** Calls a dashboard route as the signed-in owner; no session (or an expired one) -> /login. */
 async function owner<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Owner data is per request: say so before anything else runs. Without this the dev server
+  // sometimes reported "unstable value Date.now() while prerendering" in the dashboard layout.
+  await connection();
   const token = await getToken();
   if (!token) redirect("/login");
   try {
