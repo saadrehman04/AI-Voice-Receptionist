@@ -49,7 +49,7 @@ from receptionist_shared.api_models import (
     ToolCallIn,
     TurnIn,
 )
-from receptionist_shared.phone import normalize_pk_phone
+from receptionist_shared.phone import normalize_phone
 from receptionist_shared.tenant import TenantConfig
 
 
@@ -148,9 +148,9 @@ async def create_booking(
 
 @router.get("/bookings", response_model=list[BookingOut])
 async def find_bookings(phone: str, tenant: TenantDep, bookings: BookingsDep) -> list[BookingOut]:
-    normalized = normalize_pk_phone(phone)
+    normalized = normalize_phone(phone, tenant.country)
     if normalized is None:
-        raise _error(422, "invalid_phone", "phone must be a Pakistani number")
+        raise _error(422, "invalid_phone", "that doesn't look like a phone number")
     return await bookings.find(tenant, normalized)
 
 

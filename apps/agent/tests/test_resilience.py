@@ -80,7 +80,7 @@ def test_after_the_ask_the_callers_words_become_a_message() -> None:
     args = json.loads(call["function"]["arguments"])
     assert args == {
         "message": "haircut? / Sara Ahmed, 0321 555 0101, please call me back",
-        "phone": "+923215550101",
+        "phone": "03215550101",  # as said; take_message normalises it (checked below)
     }
 
 
@@ -182,10 +182,13 @@ def test_an_interrupted_ask_still_counts() -> None:
 @pytest.mark.parametrize(
     ("text", "phone"),
     [
-        ("my number is 0321-5550101", "+923215550101"),
-        ("\u06f0\u06f3\u06f2\u06f1 \u06f5\u06f5\u06f5 \u06f0\u06f1\u06f0\u06f1", "+923215550101"),
+        ("my number is 0321-5550101", "03215550101"),
+        ("\u06f0\u06f3\u06f2\u06f1 \u06f5\u06f5\u06f5 \u06f0\u06f1\u06f0\u06f1", "03215550101"),
         ("call me at 4 pm", None),
-        ("and my number is 0-3-2-1-5,550,101.", "+923215550101"),  # Whisper, seen live
+        ("and my number is 0-3-2-1-5,550,101.", "03215550101"),  # Whisper, seen live
+        # As said: take_message reads it in the business's country (US here, not a PK landline)
+        ("it's 512 555 0147", "5125550147"),
+        ("call +44 20 7946 0018", "+442079460018"),
     ],
 )
 def test_find_phone(text: str, phone: str | None) -> None:

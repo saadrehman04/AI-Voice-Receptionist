@@ -9,6 +9,7 @@ file name). These are the ONLY business facts the agent may state.
 | `slug`, `business_name`, `business_name_ur`, `business_type`, `address` | Identity. |
 | `languages`, `default_language` | `en` and/or `ur`. Urdu tenants need `greeting.ur`. |
 | `timezone`, `currency` | e.g. `Asia/Karachi`, `PKR`. |
+| `country` | ISO 3166, e.g. `US` (default `PK`): phone numbers said without a country code are read as local to it. |
 | `opening_hours` | Per weekday: `["09:00-13:00", "14:00-18:00"]` or `closed`. |
 | `services` | `name`, `name_ur`, `duration_min`, `price` (`null` = price on request, never quoted), `price_note`, `staff`. |
 | `policies` | `cancellation`, `late_arrival`, `payment`, `other`. |

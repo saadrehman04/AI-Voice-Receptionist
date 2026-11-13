@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from receptionist_shared.phone import is_country
+
 LanguageCode = Literal["en", "ur"]
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 HOURS_RE = re.compile(r"^(\d{2}):(\d{2})-(\d{2}):(\d{2})$")
@@ -107,6 +109,9 @@ class TenantConfig(_Strict):
     default_language: LanguageCode = "en"
     timezone: str = "Asia/Karachi"
     currency: str = "PKR"
+    # Where the business is (ISO 3166, e.g. "US"): phone numbers said without a country code are
+    # read as local to it (D43). Pakistan by default, so businesses saved before it still load.
+    country: str = "PK"
     address: str | None = None
     opening_hours: dict[Weekday, list[TimeRange]]
     services: list[Service] = Field(min_length=1)
@@ -136,6 +141,20 @@ class TenantConfig(_Strict):
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"unknown timezone {v!r}") from exc
         return v
+
+    @field_validator("country")
+    @classmethod
+    def _country(cls, v: str) -> str:
+        if not is_country(v):
+            raise ValueError(f"unknown country code {v!r} (use ISO 3166, e.g. US, GB, PK)")
+        return v.upper()
+
+    @field_validator("currency")
+    @classmethod
+    def _currency(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Za-z]{3}", v):
+            raise ValueError("currency must be a 3-letter ISO 4217 code, e.g. USD")
+        return v.upper()
 
     @field_validator("opening_hours", mode="before")
     @classmethod

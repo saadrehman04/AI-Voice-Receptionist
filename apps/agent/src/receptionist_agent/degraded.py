@@ -30,8 +30,6 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from receptionist_shared.phone import normalize_pk_phone
-
 MESSAGE_CALL_PREFIX = "degraded_msg_"
 END_CALL_PREFIX = "degraded_end_"
 CONFIRM_CALL_PREFIX = "degraded_ok_"
@@ -100,6 +98,7 @@ _URDU = re.compile("[\u0600-\u06ff]")
 # Digits (ASCII, Arabic-Indic, Urdu), at least 9 of them, with spaces or dashes between.
 _DIGIT = r"\d" + "\u0660-\u0669\u06f0-\u06f9"
 _PHONE = re.compile(rf"\+?[{_DIGIT}]{{9,13}}")
+_TO_ASCII = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 _ASK_PREFIXES = tuple(text[:24] for text in ASK.values())
 
 
@@ -129,13 +128,15 @@ def is_ask(message: Mapping[str, Any]) -> bool:
 
 
 def find_phone(text: str) -> str | None:
+    """The phone number in what the caller said, as plain digits ("03215550101", "+44...").
+
+    Not normalised here: this script doesn't know the business's country, and "415 555 0101"
+    is a US number for a US business but would pass Pakistan's rules as a landline.
+    `take_message` knows the country and normalises it (one it can't read is left off)."""
     # Whisper writes spoken numbers as "0-3-2-1-5,550,101" or "0321 555 0101": join digit groups.
     text = re.sub(rf"(?<=[{_DIGIT}])[\s,.\-]+(?=[{_DIGIT}])", "", text)
-    for candidate in _PHONE.findall(text):
-        phone = normalize_pk_phone(candidate)
-        if phone is not None:
-            return phone
-    return None
+    candidates = _PHONE.findall(text)
+    return candidates[0].translate(_TO_ASCII) if candidates else None
 
 
 def _call_id(prefix: str, messages: Sequence[Mapping[str, Any]]) -> str:

@@ -5,6 +5,7 @@ description = "Shared config, schemas and models used by the agent and the api."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "loguru>=0.7.3",
+    "phonenumbers>=9.0.43",
     "pydantic>=2.14.3",
     "pydantic-settings>=2.16.2",
     "pyyaml>=6.0.2",

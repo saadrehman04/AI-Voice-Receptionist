@@ -50,7 +50,7 @@ class BookingCreate(_Model):
     service: str
     start: AwareDatetime
     caller_name: str = Field(min_length=1, max_length=120)
-    phone: str = Field(pattern=r"^\+92\d{9,10}$")
+    phone: str = Field(pattern=r"^\+[1-9]\d{6,14}$")  # E.164, normalised by the agent
     call_id: str
     idempotency_key: str = Field(min_length=8, max_length=64)
 

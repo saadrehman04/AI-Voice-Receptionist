@@ -338,6 +338,23 @@ async def test_own_booking_at_that_time_is_not_blamed_on_another_caller(
     assert len(backend.bookings) == 1
 
 
+async def test_a_us_business_books_a_local_us_number(
+    salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
+) -> None:
+    """Numbers said without a country code are read in the business's country (D43)."""
+    us_salon = salon.model_copy(update={"country": "US"})
+    tools = make_tools(us_salon, backend, monday_9am)
+    start = (await offer(tools))["options"][0]["start"]
+    read_back = await tools.run("create_booking", booking_args(start, phone="(512) 555-0147"))
+    assert read_back["read_back"]["phone"] == "five one two, five five five, zero one four seven"
+    caller_replies(tools)
+    done = await tools.run(
+        "create_booking", booking_args(start, phone="(512) 555-0147", caller_confirmed=True)
+    )
+    assert done["booked"] is True
+    assert [b.phone for b in backend.bookings.values()] == ["+15125550147"]
+
+
 async def test_reschedule_flow(
     salon: TenantConfig, backend: InMemoryBackend, monday_9am: datetime
 ) -> None:

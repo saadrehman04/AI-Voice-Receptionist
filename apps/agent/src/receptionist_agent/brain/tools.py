@@ -43,7 +43,7 @@ from receptionist_agent.brain.state import CallState, Intent, StateError
 from receptionist_agent.language import caller_language
 from receptionist_agent.tracing import tool_span
 from receptionist_shared.availability import spoken_slot
-from receptionist_shared.phone import normalize_pk_phone, spoken_digits_en, spoken_digits_ur
+from receptionist_shared.phone import normalize_phone, spoken_digits_en, spoken_digits_ur
 from receptionist_shared.tenant import Service, TenantConfig
 
 ToolResult = dict[str, Any]
@@ -239,7 +239,7 @@ class ReceptionistTools:
         return dt.astimezone(self.tenant.tz)
 
     def _phone(self, raw: str | None) -> str | None:
-        return normalize_pk_phone(raw) if raw else None
+        return normalize_phone(raw, self.tenant.country) if raw else None
 
     def _wrong_weekday(self, start: date) -> ToolResult | None:
         """Refuse a date on a weekday nobody mentioned (seen live: the caller asked for
@@ -401,7 +401,7 @@ class ReceptionistTools:
             return _err("ask the caller for their name")
         phone = self._phone(_str(args, "phone"))
         if phone is None:
-            return _err("that phone number looks incomplete; ask the caller to repeat it")
+            return _err(PHONE_INCOMPLETE)
 
         self.state.set_intent(Intent.BOOK)
         self.state.update(service=service.name, start=start, caller_name=name, phone=phone)
@@ -468,7 +468,7 @@ class ReceptionistTools:
     async def reschedule_booking(self, args: Mapping[str, Any]) -> ToolResult:
         phone = self._phone(_str(args, "phone"))
         if phone is None:
-            return _err("that phone number looks incomplete; ask the caller to repeat it")
+            return _err(PHONE_INCOMPLETE)
         new_start = self._parse_start(_str(args, "new_start"))
         if new_start is None:
             return _err("new_start must be an ISO time returned by check_availability")
@@ -528,7 +528,7 @@ class ReceptionistTools:
     async def cancel_booking(self, args: Mapping[str, Any]) -> ToolResult:
         phone = self._phone(_str(args, "phone"))
         if phone is None:
-            return _err("that phone number looks incomplete; ask the caller to repeat it")
+            return _err(PHONE_INCOMPLETE)
         self.state.set_intent(Intent.CANCEL)
         self.state.update(phone=phone)
         found = await self._find_booking(phone, _str(args, "booking_id"))
@@ -687,6 +687,13 @@ def _caller_messages(context: LLMContext) -> list[str]:
             texts.append(content if isinstance(content, str) else "")
     return texts
 
+
+# Numbers without a country code are read as local to the business (D43): a caller from abroad
+# has to give theirs, so the model is told to ask for it.
+PHONE_INCOMPLETE = (
+    "that phone number looks incomplete; ask the caller to repeat it, with the country code "
+    "if they are calling from another country"
+)
 
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 # English names, and Urdu ones that can't mean anything else ("ہفتہ" is also "week", so

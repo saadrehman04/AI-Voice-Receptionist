@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from receptionist_shared.knowledge import describe_hours, describe_service
-from receptionist_shared.phone import normalize_pk_phone, spoken_digits_en, spoken_digits_ur
+from receptionist_shared.phone import normalize_phone, spoken_digits_en, spoken_digits_ur
 from receptionist_shared.tenant import TenantConfig
 
 LANGUAGE_NAMES = {"en": "English", "ur": "Urdu"}
@@ -139,7 +139,7 @@ def busy_line(tenant: TenantConfig) -> str:
 
     Only facts from the tenant's config: its name and its hand-off contact.
     """
-    phone = normalize_pk_phone(tenant.handoff.phone)
+    phone = normalize_phone(tenant.handoff.phone, tenant.country)
     who = tenant.handoff.name.split(" (")[0]
     if tenant.default_language == "ur" and tenant.greeting.ur:
         name = tenant.business_name_ur or tenant.business_name

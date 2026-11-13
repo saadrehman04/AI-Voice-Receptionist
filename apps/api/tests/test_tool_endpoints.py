@@ -192,7 +192,13 @@ async def test_knowledge_lookup_config_and_kb(api: httpx.AsyncClient) -> None:
     assert r["found"] is False
 
 
-@pytest.mark.parametrize("phone", ["12", "+1 415 555 0100"])
+@pytest.mark.parametrize("phone", ["12", "0300 12", "+1 415 555"])
 async def test_find_rejects_bad_phone(api: httpx.AsyncClient, phone: str) -> None:
     r = await api.get(f"{SALON}/bookings", params={"phone": phone})
     assert r.status_code == 422
+
+
+async def test_find_accepts_a_foreign_callers_number(api: httpx.AsyncClient) -> None:
+    """A caller from abroad gives their own country code; that's a real number, not an error."""
+    r = await api.get(f"{SALON}/bookings", params={"phone": "+1 415 555 0100"})
+    assert r.status_code == 200 and r.json() == []
