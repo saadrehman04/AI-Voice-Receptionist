@@ -515,8 +515,7 @@ Short entries, newest last: what we decided, why, and what else we considered.
   settings), phone numbers in international format.
 - **Why:** the product is being pitched to clients outside Pakistan too.
 - **Not changed (dashboard only, by choice):** the agent still speaks Urdu for businesses that
-  already have it on, and still reads phone numbers as Pakistani (`normalize_pk_phone`), so a
-  booking from a caller with a non-Pakistani number is refused until that is generalised.
+  already have it on. (Phone numbers were Pakistani-only here; D43 lifted that.)
 
 ## D42. In production, Caddy lets only the dashboard start calls on the agent (2026-11-13)
 - **Decision:** `deploy/Caddyfile` passes the agent's call set-up (`/start`, `/sessions/*`) only
@@ -530,3 +529,28 @@ Short entries, newest last: what we decided, why, and what else we considered.
 - **Alternatives:** checking a token inside the agent (more code in Pipecat's runner, which
   owns those routes); IP allow-lists (Vercel's addresses change); leaving `/client` open
   (free token spending for anyone who finds the address).
+
+## D43. Phone numbers from any country, read in the business's country (2026-11-13)
+- **Decision:** each business has a `country` (ISO 3166, default `PK` so existing businesses load
+  unchanged). A number said without a country code is read as local to it; Pakistan keeps its
+  hand-written rules (`normalize_pk_phone`, tested on real calls), every other country uses
+  `phonenumbers` (Google's libphonenumber). Read-backs group digits the local way ("512 555 0147").
+  The scripted fallback passes numbers on as said, since it doesn't know the country; the
+  `take_message` tool normalises them. The dashboard has a Country choice.
+- **Why:** the product is pitched outside Pakistan (D41), and the demo is a US clinic. Before this,
+  any non-Pakistani number was refused, so foreign callers couldn't book.
+- **Consequence:** a caller from abroad must give their country code; the tool's error tells the
+  model to ask for it.
+- **Alternatives:** guessing the country from the caller's number format (ambiguous: a 10-digit
+  number is a US number and a Pakistani landline); one hand-written rule set per country.
+
+## D44. A public demo call to a fictional clinic, no sign-up (2026-11-13)
+- **Decision:** `/demo` (linked from the home page) calls Sunrise Dental Studio
+  (`tenants/demo-dental.yaml`, invented facts, greeting says it's a demo) through
+  `/api/demo-call/*`, which forwards to the agent like the owners' test call but with the business
+  fixed in code (`DEMO_TENANT`). Both routes share `lib/agent-proxy.ts`.
+- **Why:** prospects should hear it work in one click, without signing up.
+- **Consequence:** anyone can spend LLM and voice budget; that's capped by the demo business's
+  calls-per-hour limit (D38). Demo bookings are real rows in the demo business.
+- **Alternatives:** a recorded demo video only (no trying it); demo behind sign-up (most
+  prospects won't sign up just to try).

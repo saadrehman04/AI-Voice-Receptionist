@@ -1,21 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { forwardToAgent, OFFER, startBody } from "@/lib/agent-proxy";
 import { ApiError, apiFetch } from "@/lib/api";
 import { getToken } from "@/lib/session";
 import type { Me } from "@/lib/types";
 
-// The dashboard's test call goes through here to the voice agent (Pipecat's runner):
-//   POST  /api/test-call/start                      -> agent /start
-//   POST  /api/test-call/sessions/<id>/api/offer    -> agent WebRTC offer
-//   PATCH /api/test-call/sessions/<id>/api/offer    -> agent ICE candidates
-// The business is taken from the owner's session, never from the browser, so an owner can only
-// test-call their own receptionist. Only these paths are forwarded.
-
-const AGENT_URL = (process.env.AGENT_URL ?? "http://127.0.0.1:7860").replace(/\/$/, "");
-// In production the agent sits behind Caddy, which lets call set-up through only with this key
-// (deploy/Caddyfile): the agent's /start checks no login itself. Unset in local development.
-const AGENT_KEY = process.env.AGENT_KEY;
-const OFFER = /^sessions\/[0-9a-f-]{36}\/api\/offer$/;
+// The dashboard's test call (lib/agent-proxy.ts forwards it). The business is taken from the
+// owner's session, never from the browser, so an owner can only test-call their own receptionist.
 
 async function owner(): Promise<Me | NextResponse> {
   const token = await getToken();
@@ -28,29 +19,12 @@ async function owner(): Promise<Me | NextResponse> {
   }
 }
 
-async function forward(method: string, path: string, body: string): Promise<NextResponse> {
-  const upstream = await fetch(`${AGENT_URL}/${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", ...(AGENT_KEY ? { "X-Agent-Key": AGENT_KEY } : {}) },
-    body,
-    cache: "no-store",
-  }).catch(() => null);
-  if (!upstream)
-    return NextResponse.json({ error: "the voice agent isn't running (make agent)" }, { status: 502 });
-  return new NextResponse(await upstream.text(), {
-    status: upstream.status,
-    headers: { "Content-Type": upstream.headers.get("content-type") ?? "application/json" },
-  });
-}
-
 async function handle(request: NextRequest, ctx: RouteContext<"/api/test-call/[...path]">) {
   const path = (await ctx.params).path.join("/");
   const me = await owner();
   if (me instanceof NextResponse) return me;
-  if (path === "start" && request.method === "POST") {
-    return forward("POST", "start", JSON.stringify({ transport: "webrtc", body: { tenant: me.tenant_slug } }));
-  }
-  if (OFFER.test(path)) return forward(request.method, path, await request.text());
+  if (path === "start" && request.method === "POST") return forwardToAgent("POST", "start", startBody(me.tenant_slug));
+  if (OFFER.test(path)) return forwardToAgent(request.method, path, await request.text());
   return NextResponse.json({ error: "not found" }, { status: 404 });
 }
 

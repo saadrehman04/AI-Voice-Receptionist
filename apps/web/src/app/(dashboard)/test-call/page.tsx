@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/ui";
 
-import { TestCall } from "./test-call";
+import { TestCall } from "@/components/test-call";
 
 export const metadata = { title: "Test call · Voice AI Receptionist" };
 

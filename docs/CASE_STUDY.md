@@ -147,5 +147,5 @@ a way through (D37).
   700 ms, TTS 290 ms) made it obvious which changes could matter and which never would.
 - **Free tiers shape the architecture.** Fallbacks, budgets and a scripted last resort weren't
   polish; they were what made the free stack usable at all.
-- **Write the decision down when you make it.** 42 short decision records made this case study
+- **Write the decision down when you make it.** 44 short decision records made this case study
   a summary rather than an excavation.

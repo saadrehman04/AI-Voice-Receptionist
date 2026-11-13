@@ -16,7 +16,10 @@ export default function Home() {
         </p>
       </div>
       <div className="flex flex-wrap gap-3">
-        <Link href="/signup" className={buttonClass.primary}>
+        <Link href="/demo" className={buttonClass.primary}>
+          Try a live demo call
+        </Link>
+        <Link href="/signup" className={buttonClass.secondary}>
           Set up your business
         </Link>
         <Link href="/login" className={buttonClass.secondary}>

@@ -3,7 +3,7 @@
 import { PipecatClient, type TransportState } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Card, ErrorNote, buttonClass, cx } from "@/components/ui";
 
@@ -14,7 +14,28 @@ type Line = { who: "caller"; text: string } | { who: "agent"; parts: { id: numbe
 
 const LIVE: TransportState[] = ["connecting", "connected", "ready", "authenticating", "authenticated", "initializing", "initialized"];
 
-export function TestCall() {
+type Props = {
+  /** Where the call starts: the owner's own receptionist, or the public demo clinic. */
+  endpoint?: string;
+  startLabel?: string;
+  tips?: ReactNode;
+  /** Shown once the call has ended (owners: where to find it). */
+  afterCall?: ReactNode;
+  /** Shown when the call can't start for a reason other than the microphone. */
+  unreachable?: string;
+};
+
+export function TestCall({
+  endpoint = "/api/test-call/start",
+  startLabel = "Start test call",
+  tips = "Uses your microphone. Try booking, asking a price, or moving an appointment. Speak over the receptionist to interrupt it.",
+  afterCall = (
+    <>
+      It&apos;s on your <Link href="/calls" className="font-medium text-emerald-700 underline dark:text-emerald-400">Calls</Link> page now (the summary takes a few seconds).
+    </>
+  ),
+  unreachable = "Couldn't start the call. Is the voice agent running (make agent)?",
+}: Props) {
   const clientRef = useRef<PipecatClient | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [state, setState] = useState<TransportState>("disconnected");
@@ -68,13 +89,13 @@ export function TestCall() {
     });
     clientRef.current = client;
     try {
-      await client.startBotAndConnect({ endpoint: "/api/test-call/start" });
+      await client.startBotAndConnect({ endpoint });
     } catch (err) {
       setState("disconnected");
       setError(
         err instanceof Error && /permission|notallowed/i.test(err.message)
           ? "Allow the microphone for this page, then try again."
-          : "Couldn't start the call. Is the voice agent running (make agent)?",
+          : unreachable,
       );
     }
   }
@@ -106,20 +127,13 @@ export function TestCall() {
             </button>
           ) : (
             <button type="button" onClick={startCall} className={buttonClass.primary}>
-              {ended ? "Call again" : "Start test call"}
+              {ended ? "Call again" : startLabel}
             </button>
           )}
         </div>
-        <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">
-          Uses your microphone. Try booking, asking a price, or moving an appointment. Speak over the
-          receptionist to interrupt it.
-        </p>
+        <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">{tips}</p>
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
-        {ended && !error ? (
-          <p className="mt-3 text-sm">
-            It&apos;s on your <Link href="/calls" className="font-medium text-emerald-700 underline dark:text-emerald-400">Calls</Link> page now (the summary takes a few seconds).
-          </p>
-        ) : null}
+        {ended && !error && afterCall ? <p className="mt-3 text-sm">{afterCall}</p> : null}
         <audio ref={audioRef} autoPlay />
       </Card>
       <Card className="lg:col-span-2">
