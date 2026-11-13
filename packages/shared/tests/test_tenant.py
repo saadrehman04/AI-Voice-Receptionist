@@ -25,7 +25,7 @@ def base() -> dict[str, Any]:
 
 def test_example_tenants_load() -> None:
     tenants = {t.slug: t for t in list_tenants(TENANTS)}
-    assert set(tenants) == {"demo-salon", "demo-workshop"}
+    assert set(tenants) == {"demo-dental", "demo-salon", "demo-workshop"}
     salon = tenants["demo-salon"]
     assert salon.business_name == "Noor Beauty Salon"
     assert salon.languages == ["en", "ur"]
@@ -58,6 +58,8 @@ def test_prices_are_decimal() -> None:
     [
         ({"slug": "Bad Slug"}, "slug"),
         ({"timezone": "Mars/Olympus"}, "timezone"),
+        ({"country": "Narnia"}, "country"),
+        ({"currency": "dollars"}, "currency"),
         ({"default_language": "ur", "languages": ["en"]}, "default_language"),
         ({"opening_hours": {"monday": ["18:00-09:00"]}}, "start before"),
         ({"opening_hours": {"monday": ["9-5"]}}, "09:00-17:00"),
@@ -95,3 +97,10 @@ def test_config_is_immutable() -> None:
     salon = load_tenant_by_slug("demo-salon", TENANTS)
     with pytest.raises(ValidationError):
         salon.business_name = "Changed"  # type: ignore[misc]
+
+
+def test_country_defaults_to_pakistan_and_codes_are_upper_cased() -> None:
+    """Businesses saved before `country` existed were all Pakistani; they still load as such."""
+    assert TenantConfig.model_validate(base()).country == "PK"
+    cfg = TenantConfig.model_validate(base() | {"country": "us", "currency": "usd"})
+    assert (cfg.country, cfg.currency) == ("US", "USD")

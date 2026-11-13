@@ -1,0 +1,90 @@
+# Example tenant: the public demo on the home page (/demo). A fictional US dental practice;
+# every fact here is invented test data. English only, US numbers read locally (D43).
+slug: demo-dental
+business_name: Sunrise Dental Studio
+business_type: dental clinic
+languages: [en]
+default_language: en
+timezone: America/Chicago
+currency: USD
+country: US
+address: 100 Demo Street, Suite 200, Austin, Texas
+
+opening_hours:
+  monday: ["08:00-12:30", "13:30-17:00"]
+  tuesday: ["08:00-12:30", "13:30-17:00"]
+  wednesday: ["08:00-12:30", "13:30-19:00"]
+  thursday: ["08:00-12:30", "13:30-17:00"]
+  friday: ["08:00-14:00"]
+  saturday: ["09:00-13:00"]
+  sunday: closed
+
+services:
+  - name: Checkup and cleaning
+    duration_min: 60
+    price: 120
+    staff: [Dr. Lee, Dr. Patel]
+  - name: Kids checkup
+    duration_min: 45
+    price: 90
+    price_note: for children under 12
+    staff: [Dr. Patel]
+  - name: Tooth filling
+    duration_min: 60
+    price: 150
+    price_note: from; final price depends on the tooth and material
+    staff: [Dr. Lee, Dr. Patel]
+  - name: Teeth whitening
+    duration_min: 90
+    price: 350
+    staff: [Dr. Lee]
+  - name: Emergency visit
+    duration_min: 30
+    price: 95
+    price_note: exam and X-ray; any treatment is priced separately
+    staff: [Dr. Lee, Dr. Patel]
+  - name: Root canal
+    duration_min: 90
+    price: null   # price on request: the agent must not quote one
+    staff: [Dr. Lee]
+  - name: Braces and aligners consultation
+    duration_min: 45
+    price: 0
+    price_note: free consultation
+    staff: [Dr. Patel]
+
+policies:
+  cancellation: Please cancel or reschedule at least 24 hours before your appointment. Missed appointments without notice may be charged 50 dollars.
+  late_arrival: If you are more than 15 minutes late we may need to reschedule so other patients aren't kept waiting.
+  payment: We accept credit and debit cards, Apple Pay, and HSA or FSA cards.
+
+greeting:
+  en: Thank you for calling Sunrise Dental Studio. This is our AI receptionist demo. How can I help you today?
+
+handoff:
+  name: Maria (front desk)
+  phone: "+1 512 555 0100"
+
+faq:
+  - question: Do you take dental insurance?
+    answer: Yes, we accept most PPO dental insurance plans, and we check your coverage before your visit. Please bring your insurance card.
+    keywords: [insurance, ppo, coverage, plan, insured]
+  - question: Do you see children?
+    answer: Yes, we see children from age 3. Dr. Patel does our kids checkups.
+    keywords: [children, kids, child, son, daughter, pediatric, age]
+  - question: What should I do in a dental emergency?
+    answer: For severe tooth pain, a broken tooth or swelling, book an emergency visit and we will see you the same day when a slot is free. For heavy bleeding or swelling that affects breathing, call 911.
+    keywords: [emergency, pain, toothache, broken, swelling, urgent, bleeding]
+  - question: Is there parking?
+    answer: Yes, there is free parking behind the building, and the office is on the second floor with an elevator.
+    keywords: [parking, park, car, elevator, wheelchair, access]
+  - question: Do you offer payment plans?
+    answer: Yes, for treatments over 500 dollars we offer interest-free payment plans over 6 months.
+    keywords: [payment plan, installments, finance, monthly, afford]
+  - question: What should I bring to my first visit?
+    answer: Please bring a photo ID, your insurance card if you have one, and a list of any medicines you take. New patients should arrive 10 minutes early.
+    keywords: [first visit, new patient, bring, documents, id, arrive]
+
+booking_buffer_min: 10
+min_notice_min: 120
+max_days_ahead: 60
