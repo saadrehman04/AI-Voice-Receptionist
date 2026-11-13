@@ -28,3 +28,4 @@ models/
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
+.env.local
