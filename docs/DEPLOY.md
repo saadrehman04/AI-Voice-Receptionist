@@ -69,10 +69,14 @@ echo "$KEY"   # once, to paste into Vercel as AGENT_KEY (step 2); keep it out of
 ```
 
 **Firewall**: open TCP 80 and 443 (Caddy). Call audio is WebRTC over UDP and goes straight to
-the agent, not through Caddy: allow inbound UDP to the server (aiortc picks high ports per call),
-or use a TURN server (see "WebRTC audio" under the laptop demo below). On a cloud VM behind NAT (Azure, Oracle) the agent may
-also need a STUN server to learn its public address. This part hasn't been tested on a cloud
-server yet: check the first browser test call carefully.
+the agent, not through Caddy, on a random high port per call (Linux's 32768-60999): allow inbound
+UDP 32768-60999 in the cloud firewall (Oracle: the subnet's security list; Azure: the network
+security group), or use a TURN server instead (see "WebRTC audio" under the laptop demo below).
+Oracle's Ubuntu images also reject everything but SSH in the server's own iptables: add ACCEPT
+rules for TCP 80, 443 and that UDP range before the `REJECT` line in `/etc/iptables/rules.v4`
+and apply them (`iptables -I INPUT <line> ...`). A cloud VM behind NAT only knows its private
+address, so give the agent a STUN server in `.env`:
+`PIPECAT_ICE_SERVERS=stun:stun.l.google.com:19302` (Pipecat's runner reads it).
 
 **Update** to a new version:
 
