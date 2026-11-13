@@ -40,8 +40,29 @@ function Section({ title, hint, id, children }: { title: string; hint?: ReactNod
 // Every time zone and currency the browser knows. The server (Node) knows a slightly different
 // list, so the server renders only the saved value and the browser fills in the rest after
 // hydration (useSyncExternalStore's server snapshot), else React reports a hydration mismatch.
-type Supported = { timeZone: string[]; currency: string[] };
+type Supported = { timeZone: string[]; currency: string[]; country: string[] };
 let browserLists: Supported | null = null;
+
+// ISO 3166 codes of countries with phone numbers (the API checks against the same set).
+const COUNTRY_CODES = (
+  "AD AE AF AG AI AL AM AO AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT " +
+  "BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH " +
+  "ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GT GU GW GY HK HN HR HT HU " +
+  "ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS " +
+  "LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG " +
+  "NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE " +
+  "SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA " +
+  "UG US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW"
+).split(" ");
+
+/** "US" -> "United States", in English (the code itself if the browser can't name it). */
+export function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
 
 function readBrowserLists(): Supported {
   if (browserLists === null) {
@@ -52,7 +73,12 @@ function readBrowserLists(): Supported {
         return fallback;
       }
     };
-    browserLists = { timeZone: list("timeZone", ["UTC"]), currency: list("currency", ["USD", "EUR", "GBP"]) };
+    const byName = [...COUNTRY_CODES].sort((a, b) => countryName(a).localeCompare(countryName(b)));
+    browserLists = {
+      timeZone: list("timeZone", ["UTC"]),
+      currency: list("currency", ["USD", "EUR", "GBP"]),
+      country: byName,
+    };
   }
   return browserLists;
 }
@@ -95,6 +121,19 @@ export function BusinessSection({ config, onChange, showSlug = false }: EditorPr
             value={config.address ?? ""}
             onChange={(e) => onChange({ ...config, address: e.target.value || null })}
           />
+        </Field>
+        <Field label="Country" hint="Callers' phone numbers without a country code are read as local to it.">
+          <select
+            className={inputClass}
+            value={config.country}
+            onChange={(e) => onChange({ ...config, country: e.target.value })}
+          >
+            {withCurrent(lists?.country, config.country).map((c) => (
+              <option key={c} value={c}>
+                {lists ? `${countryName(c)} (${c})` : c}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Time zone" hint="Opening hours and bookings use this clock.">
           <select

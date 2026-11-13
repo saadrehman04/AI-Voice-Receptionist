@@ -5,6 +5,8 @@ import {
   hoursFromForm,
   hoursToForm,
   slugify,
+  localCountry,
+  localTimeZone,
   starterConfig,
   toPayload,
   validateConfig,
@@ -91,12 +93,16 @@ describe("validateConfig", () => {
     expect(validateConfig({ ...ready(), whatsapp_phone_number_id: "+92 300" })).toHaveLength(1);
   });
 
-  it("starts new businesses in English, on the owner's clock, in US dollars", () => {
+  it("starts new businesses in English with fixed defaults the server and browser agree on", () => {
     const c = starterConfig("Bright Smile Dental", "dental clinic");
     expect(c.languages).toEqual(["en"]);
     expect(c.greeting).toEqual({ en: "Thank you for calling Bright Smile Dental. How can I help you today?" });
-    expect(c.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    expect(c.currency).toBe("USD");
+    expect([c.timezone, c.currency, c.country]).toEqual(["UTC", "USD", "US"]);
+  });
+
+  it("reads the owner's time zone and country from the browser", () => {
+    expect(localTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(localCountry()).toMatch(/^[A-Z]{2}$/);
   });
 });
 

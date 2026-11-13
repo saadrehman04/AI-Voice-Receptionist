@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { createBusiness, draftFromWebsite } from "@/app/actions";
 import {
@@ -19,6 +19,8 @@ import {
   hoursToForm,
   problemsByArea,
   slugify,
+  localCountry,
+  localTimeZone,
   starterConfig,
   toPayload,
 } from "@/lib/tenant-form";
@@ -42,6 +44,12 @@ export function Wizard() {
   const [hours, setHours] = useState(() => hoursToForm(config.opening_hours));
   const [slugEdited, setSlugEdited] = useState(false);
   const [website, setWebsite] = useState("");
+
+  // The owner's own clock and country: only known in the browser, so set after the first render.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- browser-only values, read once
+    setConfig((c) => ({ ...c, timezone: localTimeZone(), country: localCountry() }));
+  }, []);
   const [draft, setDraft] = useState<WebsiteDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [problems, setProblems] = useState<string[]>([]);

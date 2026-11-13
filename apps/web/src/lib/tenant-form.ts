@@ -63,6 +63,16 @@ export function localTimeZone(): string {
   }
 }
 
+/** The owner's country from their browser's language setting ("en-PK" -> "PK"), else "US". */
+export function localCountry(): string {
+  try {
+    const region = typeof navigator === "undefined" ? undefined : new Intl.Locale(navigator.language).maximize().region;
+    return region && /^[A-Z]{2}$/.test(region) ? region : "US";
+  } catch {
+    return "US";
+  }
+}
+
 /** A starting point for the wizard: no services, no prices, nothing the owner didn't enter. */
 export function starterConfig(businessName: string, businessType: string): TenantConfig {
   const weekday = [{ start: "10:00", end: "19:00" }];
@@ -72,8 +82,12 @@ export function starterConfig(businessName: string, businessType: string): Tenan
     business_type: businessType,
     languages: ["en"],
     default_language: "en",
-    timezone: localTimeZone(),
+    // Fixed here; the wizard swaps in the owner's own time zone and country once it runs in the
+    // browser. Reading them here would differ between Vercel's server (UTC) and the browser, and
+    // React would refuse the page (hydration mismatch).
+    timezone: "UTC",
     currency: "USD",
+    country: "US",
     address: null,
     opening_hours: {
       monday: weekday,

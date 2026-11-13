@@ -53,6 +53,7 @@ export interface TenantConfig {
   default_language: Language;
   timezone: string;
   currency: string;
+  country: string; // ISO 3166 ("US"): phone numbers without a country code are read as local to it
   address?: string | null;
   opening_hours: Partial<Record<Weekday, TimeRange[]>>;
   services: Service[];
